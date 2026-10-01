@@ -19,7 +19,8 @@ export async function createApp() {
     if (request.url.length > 2048) return reply.code(414).send({ error: { code: 'URI_TOO_LONG', message: 'Yêu cầu quá dài.' } });
   });
   app.setErrorHandler((error, request, reply) => {
-    request.log.error({ name: (error as Error).name }, 'request failed');
+    request.log.error({ name: (error as Error).name, code: (error as Error & { code?: string }).code }, 'request failed');
+    if ((error as Error & { statusCode?: number; code?: string }).statusCode === 413 || (error as Error & { code?: string }).code === 'FST_ERR_CTP_BODY_TOO_LARGE') return reply.code(413).send({ error: { code: 'REQUEST_TOO_LARGE', message: 'The request is too large. Product images must be 8 MB or smaller.' } });
     return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Đã có lỗi xảy ra.' } });
   });
   app.get('/health', async () => ({ status: 'ok' }));

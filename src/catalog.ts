@@ -12,7 +12,7 @@ const searchEscape = (value: string) => value.replace(/[\\%_]/g, (c) => `\\${c}`
 
 export async function registerCatalogRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/public/categories', async (_request, reply) => {
-    const result = await pool.query(`SELECT slug, name, description, icon_key AS "iconKey", image_url AS "imageUrl" FROM categories WHERE is_active = true AND ${mode === 'test' ? "provenance IN ('PRODUCTION','TEST')" : "provenance = 'PRODUCTION'"} ORDER BY sort_order ASC, name ASC, slug ASC`);
+    const result = await pool.query(`SELECT slug, name, description, CASE WHEN icon_key IN ('dress','shirt','pants','skirt','accessory') THEN icon_key ELSE 'generic' END AS "iconKey", image_url AS "imageUrl" FROM categories WHERE is_active = true AND ${mode === 'test' ? "provenance IN ('PRODUCTION','TEST')" : "provenance = 'PRODUCTION'"} ORDER BY sort_order ASC, name ASC, slug ASC`);
     return reply.send({ data: result.rows });
   });
 
@@ -62,7 +62,7 @@ export async function registerCatalogRoutes(app: FastifyInstance): Promise<void>
     if (!product) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Không tìm thấy sản phẩm.' } });
     const [variants, images] = await Promise.all([
       pool.query(`SELECT id AS "variantId",size, color_code AS "colorCode", color_name AS "colorName", display_color AS "displayColor", color_hex AS "colorHex", COALESCE(price_override_vnd, $2::integer)::int AS "originalPriceVnd", floor((COALESCE(price_override_vnd,$2::integer)::numeric * (100-$3) + 50)/100)::int AS "salePriceVnd", $3::integer AS "discountPercent", (floor((COALESCE(price_override_vnd,$2::integer)::numeric * (100-$3) + 50)/100) < COALESCE(price_override_vnd, $2::integer)) AS "hasDiscount", COALESCE(price_override_vnd, $2::integer)::int AS "priceVnd", stock_quantity AS "stockQuantity", CASE WHEN stock_quantity > 0 THEN 'IN_STOCK' ELSE 'OUT_OF_STOCK' END AS availability FROM product_variants WHERE product_id=$1 AND is_active=true ORDER BY size, color_code, id`, [product.id, product.basePriceVnd, product.discountPercent]),
-      pool.query(`SELECT url, alt_text AS "altText", sort_order AS "sortOrder", is_primary AS "isPrimary" FROM product_images WHERE product_id=$1 ORDER BY is_primary DESC, sort_order ASC, id`, [product.id]),
+      pool.query(`SELECT i.url, i.alt_text AS "altText", i.sort_order AS "sortOrder", i.is_primary AS "isPrimary", i.variant_id AS "variantId" FROM product_images i WHERE i.product_id=$1 AND (i.variant_id IS NULL OR EXISTS(SELECT 1 FROM product_variants v WHERE v.id=i.variant_id AND v.is_active)) ORDER BY i.is_primary DESC, i.sort_order ASC, i.id`, [product.id]),
     ]);
     delete product.id;
     return reply.send({ data: { ...product, variants: variants.rows, images: images.rows } });

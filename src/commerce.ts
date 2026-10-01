@@ -1,10 +1,11 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { registerProductAdminRoutes } from './product-admin.js';
 import { z } from 'zod';
 import { pool } from './db.js';
 
-const mode = process.env.CATALOG_MODE ?? 'production';
-const provenance = mode === 'test' ? 'TEST' : 'PRODUCTION';
+export const mode = process.env.CATALOG_MODE ?? 'production';
+export const provenance = mode === 'test' ? 'TEST' : 'PRODUCTION';
 const origins = (process.env.CORS_ORIGINS ?? 'http://localhost:3000').split(',').map((v) => v.trim()).filter(Boolean);
 const secureCookie = process.env.NODE_ENV === 'production' ? '; Secure' : '';
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -38,10 +39,10 @@ async function ensureCart(request: FastifyRequest, reply: FastifyReply) {
   setCookie(reply, cartCookie, token, 60 * 60 * 24 * 30);
   return String(created.rows[0].id);
 }
-async function audit(client: { query: (text: string, values?: unknown[]) => Promise<unknown> }, actorId: string, event: string, entity: string, id: string | null, metadata: Record<string, unknown> = {}) {
+export async function audit(client: { query: (text: string, values?: unknown[]) => Promise<unknown> }, actorId: string, event: string, entity: string, id: string | null, metadata: Record<string, unknown> = {}) {
   await client.query('INSERT INTO audit_events(provenance,actor_admin_id,event_type,entity_type,entity_id,metadata) VALUES($1,$2,$3,$4,$5,$6::jsonb)', [provenance, actorId, event, entity, id, JSON.stringify(metadata)]);
 }
-async function adminId(request: FastifyRequest) {
+export async function adminId(request: FastifyRequest) {
   const token = cookieValue(request, adminCookie);
   if (!token || !/^[A-Za-z0-9_-]{40,80}$/.test(token)) return null;
   const result = await pool.query(`SELECT u.id FROM admin_sessions s JOIN admin_users u ON u.id=s.admin_user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.is_active=true AND u.provenance=$2`, [sha(token), provenance]);
@@ -53,7 +54,7 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
   if (!id) { invalid(reply, 'ADMIN_AUTH_REQUIRED', 'Please sign in to continue.', 401); return null; }
   return id;
 }
-async function transactional<T>(work: (client: import('pg').PoolClient) => Promise<T>): Promise<T> {
+export async function transactional<T>(work: (client: import('pg').PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try { await client.query('BEGIN'); const value = await work(client); await client.query('COMMIT'); return value; }
   catch (error) { await client.query('ROLLBACK'); throw error; }
@@ -65,6 +66,7 @@ export async function registerCommerceRoutes(app: FastifyInstance): Promise<void
     const origin = request.headers.origin;
     if (origin && !origins.includes(origin)) return invalid(reply, 'ORIGIN_NOT_ALLOWED', 'Request origin is not allowed.', 403);
   };
+  await registerProductAdminRoutes(app);
   app.get('/api/v1/public/store-settings', async (_request, reply) => {
     const result = await pool.query('SELECT contact_phone AS "contactPhone", messenger_url AS "messengerUrl", default_shipping_fee_vnd AS "shippingFeeVnd" FROM store_settings WHERE provenance=$1', [provenance]);
     const row = result.rows[0] ?? { contactPhone: '0876146498', messengerUrl: 'https://www.facebook.com/tiemcuamay04', shippingFeeVnd: null };
@@ -83,7 +85,7 @@ export async function registerCommerceRoutes(app: FastifyInstance): Promise<void
     const session = await ensureCart(request, reply);
     const [settings, items] = await Promise.all([
       pool.query('SELECT default_shipping_fee_vnd AS fee FROM store_settings WHERE provenance=$1', [provenance]),
-      pool.query(`SELECT ci.id AS "itemId",v.id AS "variantId",p.slug,p.name AS "productName",v.sku,v.size,v.color_name AS "colorName",v.stock_quantity AS stock,(v.is_active AND p.status='ACTIVE') AS available,ci.quantity,COALESCE(v.price_override_vnd,p.base_price_vnd) AS "originalPriceVnd",p.discount_percent AS "discountPercent",COALESCE((SELECT i.url FROM product_images i WHERE i.product_id=p.id ORDER BY i.is_primary DESC,i.sort_order,i.id LIMIT 1),'') AS "imageUrl" FROM cart_items ci JOIN product_variants v ON v.id=ci.variant_id JOIN products p ON p.id=v.product_id WHERE ci.cart_session_id=$1 ORDER BY ci.created_at,ci.id`, [session]),
+      pool.query(`SELECT ci.id AS "itemId",v.id AS "variantId",p.slug,p.name AS "productName",v.sku,v.size,v.color_name AS "colorName",v.stock_quantity AS stock,(v.is_active AND p.status='ACTIVE') AS available,ci.quantity,COALESCE(v.price_override_vnd,p.base_price_vnd) AS "originalPriceVnd",p.discount_percent AS "discountPercent",COALESCE((SELECT i.url FROM product_images i WHERE i.product_id=p.id AND (i.variant_id IS NULL OR i.variant_id=v.id) ORDER BY (i.variant_id=v.id) DESC NULLS LAST,i.is_primary DESC,i.sort_order,i.id LIMIT 1),'') AS "imageUrl" FROM cart_items ci JOIN product_variants v ON v.id=ci.variant_id JOIN products p ON p.id=v.product_id WHERE ci.cart_session_id=$1 ORDER BY ci.created_at,ci.id`, [session]),
     ]);
     const rows = items.rows.map((item: DbRow) => ({ ...item, originalPriceVnd: Number(item.originalPriceVnd), discountPercent: Number(item.discountPercent), salePriceVnd: salePrice(Number(item.originalPriceVnd), Number(item.discountPercent)), hasDiscount: salePrice(Number(item.originalPriceVnd), Number(item.discountPercent)) < Number(item.originalPriceVnd), lineTotalVnd: salePrice(Number(item.originalPriceVnd), Number(item.discountPercent)) * Number(item.quantity), stock: Number(item.stock) }));
     const subtotalVnd = rows.reduce((total: number, item: DbRow) => total + Number(item.lineTotalVnd), 0);
@@ -150,7 +152,7 @@ export async function registerCommerceRoutes(app: FastifyInstance): Promise<void
         if (dupe.rows[0]) return dupe.rows[0].request_hash === requestHash ? { existing: true, code: dupe.rows[0].order_code } : { error: 'IDEMPOTENCY_CONFLICT' };
         const settings = await client.query('SELECT default_shipping_fee_vnd AS fee FROM store_settings WHERE provenance=$1 FOR UPDATE', [provenance]);
         if (settings.rows[0]?.fee === null || settings.rows[0]?.fee === undefined) return { error: 'SHIPPING_NOT_CONFIGURED' };
-        const items = await client.query(`SELECT ci.variant_id,ci.quantity,v.product_id,v.sku,v.size,v.color_name,v.stock_quantity,v.is_active,p.status,p.provenance,p.name,p.discount_percent,COALESCE(v.price_override_vnd,p.base_price_vnd)::int AS original_price,COALESCE((SELECT i.url FROM product_images i WHERE i.product_id=p.id ORDER BY i.is_primary DESC,i.sort_order,i.id LIMIT 1),'') AS image_url FROM cart_items ci JOIN product_variants v ON v.id=ci.variant_id JOIN products p ON p.id=v.product_id WHERE ci.cart_session_id=$1 ORDER BY ci.variant_id FOR UPDATE OF v`, [sessionId]);
+        const items = await client.query(`SELECT ci.variant_id,ci.quantity,v.product_id,v.sku,v.size,v.color_name,v.stock_quantity,v.is_active,p.status,p.provenance,p.name,p.discount_percent,COALESCE(v.price_override_vnd,p.base_price_vnd)::int AS original_price,COALESCE((SELECT i.url FROM product_images i WHERE i.product_id=p.id AND (i.variant_id IS NULL OR i.variant_id=v.id) ORDER BY (i.variant_id=v.id) DESC NULLS LAST,i.is_primary DESC,i.sort_order,i.id LIMIT 1),'') AS image_url FROM cart_items ci JOIN product_variants v ON v.id=ci.variant_id JOIN products p ON p.id=v.product_id WHERE ci.cart_session_id=$1 ORDER BY ci.variant_id FOR UPDATE OF v,p`, [sessionId]);
         if (!items.rows.length) return { error: 'CART_EMPTY' };
         if (items.rows.some((item: DbRow) => !item.is_active || item.status !== 'ACTIVE' || (mode === 'production' && item.provenance !== 'PRODUCTION'))) return { error: 'VARIANT_UNAVAILABLE' };
         for (const item of items.rows) if (Number(item.quantity) > Number(item.stock_quantity)) return { error: 'INSUFFICIENT_STOCK' };

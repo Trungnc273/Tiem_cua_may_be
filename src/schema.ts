@@ -28,6 +28,10 @@ export const productImages = pgTable('product_images', {
   url: text('url').notNull(), altText: varchar('alt_text', { length: 180 }).notNull(), sortOrder: integer('sort_order').notNull(),
   isPrimary: boolean('is_primary').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
 });
+export const productMediaFiles = pgTable('product_media_files', {
+  id: uuid('id').defaultRandom().primaryKey(), storageKey: varchar('storage_key', { length: 48 }).notNull().unique(), contentType: varchar('content_type', { length: 32 }).notNull(),
+  byteSize: integer('byte_size').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+});
 export const storeSettings = pgTable('store_settings', {
   provenance: catalogProvenance('provenance').primaryKey(), contactPhone: varchar('contact_phone', { length: 24 }).notNull(), messengerUrl: text('messenger_url').notNull(),
   defaultShippingFeeVnd: integer('default_shipping_fee_vnd'), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),

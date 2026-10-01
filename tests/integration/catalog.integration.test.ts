@@ -5,10 +5,11 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const testUrl = process.env.TEST_DATABASE_URL;
-const baseUrl = process.env.TEST_API_URL ?? 'http://127.0.0.1:4000';
+const baseUrl = process.env.TEST_API_URL ?? 'http://127.0.0.1:4004';
 const { Pool } = pg;
 const pool = testUrl ? new Pool({ connectionString: testUrl }) : null;
 let productionProcess: ChildProcess | undefined;
+let testProcess: ChildProcess | undefined;
 type ProductList = { data: Array<{ slug: string; name: string; categorySlug: string; priceVnd: number }>; pagination: { total: number; page: number; limit: number; pages: number } };
 type CategoryList = { data: Array<{ slug: string }> };
 type ProductDetail = { data: { variants: Array<{ size: string; priceVnd: number; availability: string }>; images: unknown[] } };
@@ -20,16 +21,22 @@ const skipOptions = testUrl ? undefined : { skip: 'Set TEST_DATABASE_URL to an i
 
 before(async () => {
   if (!testUrl) return;
+  testProcess = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
+    cwd: process.cwd(), stdio: 'ignore', env: { ...process.env, DATABASE_URL: testUrl, NODE_ENV: 'test', CATALOG_MODE: 'test', PORT: new URL(baseUrl).port },
+  });
   productionProcess = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
     cwd: process.cwd(), stdio: 'ignore', env: { ...process.env, DATABASE_URL: testUrl, NODE_ENV: 'test', CATALOG_MODE: 'production', PORT: '4001' },
   });
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try { if ((await fetch('http://127.0.0.1:4001/ready')).ok) return; } catch { /* service is starting */ }
-    await delay(100);
+  for (const url of [baseUrl, 'http://127.0.0.1:4001']) {
+    let ready = false;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      try { if ((await fetch(`${url}/ready`)).ok) { ready = true; break; } } catch { /* service is starting */ }
+      await delay(100);
+    }
+    if (!ready) throw new Error(`Catalog integration API did not start at ${url}`);
   }
-  throw new Error('Production-mode API did not start');
 });
-after(async () => { await pool?.end(); productionProcess?.kill(); });
+after(async () => { await pool?.end(); productionProcess?.kill(); testProcess?.kill(); });
 
 test('A: active categories are listed and inactive categories are hidden', skipOptions, async () => {
   const result = await fetchJson<CategoryList>('/api/v1/public/categories');

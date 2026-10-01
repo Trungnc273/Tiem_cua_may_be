@@ -5,7 +5,7 @@ if (process.env.NODE_ENV === 'production' || process.env.CATALOG_MODE !== 'test'
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const categories = [
-  ['vay-dam', 'Váy đầm', 'dress'], ['ao', 'Áo', 'shirt'], ['quan', 'Quần', 'pants'], ['chan-vay', 'Chân váy', 'skirt'], ['phu-kien', 'Phụ kiện', 'bag'],
+  ['vay-dam', 'Váy đầm', 'dress'], ['ao', 'Áo', 'shirt'], ['quan', 'Quần', 'pants'], ['chan-vay', 'Chân váy', 'skirt'], ['phu-kien', 'Phụ kiện', 'accessory'],
 ];
 const products = [
   { slug: 'ao-blouse-no-tay', name: 'Áo blouse nơ tay phồng', category: 'ao', price: 259000, image: 'product-blouse-clean.png', detailImage: null, fresh: true },
