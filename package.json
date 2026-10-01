@@ -1,0 +1,35 @@
+{
+  "name": "tiem-cua-may-be",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18.0" },
+  "packageManager": "pnpm@12.4.1",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/src/server.js",
+    "lint": "eslint src tests scripts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/catalog.test.ts",
+    "test:integration": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/integration/*.test.ts",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed:test": "tsx scripts/seed-test.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "11.3.0",
+    "dotenv": "17.4.2",
+    "drizzle-orm": "0.45.2",
+    "fastify": "5.12.4",
+    "pg": "8.23.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.0",
+    "@types/pg": "8.15.6",
+    "eslint": "9.39.5",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0"
+  }
+}
