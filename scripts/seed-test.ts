@@ -17,6 +17,11 @@ const products = [
 ];
 try {
   await pool.query('BEGIN');
+  await pool.query("UPDATE store_settings SET default_shipping_fee_vnd=25000,updated_at=now() WHERE provenance='TEST'");
+  await pool.query("DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE provenance='TEST')");
+  await pool.query("DELETE FROM orders WHERE provenance='TEST'");
+  await pool.query("DELETE FROM cart_items WHERE cart_session_id IN (SELECT id FROM cart_sessions WHERE provenance='TEST')");
+  await pool.query("DELETE FROM cart_sessions WHERE provenance='TEST'");
   for (const [i, [slug, name, icon]] of categories.entries()) {
     await pool.query(`INSERT INTO categories(slug,name,icon_key,sort_order,is_active,provenance) VALUES($1,$2,$3,$4,true,'TEST') ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,icon_key=EXCLUDED.icon_key,sort_order=EXCLUDED.sort_order,is_active=true,provenance='TEST'`, [slug, name, icon, i + 1]);
   }

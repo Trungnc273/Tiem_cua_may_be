@@ -14,7 +14,8 @@
     "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/catalog.test.ts",
     "test:integration": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/integration/*.test.ts",
     "db:migrate": "tsx scripts/migrate.ts",
-    "db:seed:test": "tsx scripts/seed-test.ts"
+    "db:seed:test": "tsx scripts/seed-test.ts",
+    "admin:create": "tsx scripts/create-admin.ts"
   },
   "dependencies": {
     "@fastify/cors": "11.3.0",

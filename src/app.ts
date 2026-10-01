@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import { z } from 'zod';
 import { pool } from './db.js';
 import { registerCatalogRoutes } from './catalog.js';
+import { registerCommerceRoutes } from './commerce.js';
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -13,12 +14,12 @@ const env = envSchema.parse(process.env);
 export async function createApp() {
   const app = Fastify({ logger: { redact: ['req.headers.authorization', 'req.headers.cookie'], level: env.NODE_ENV === 'test' ? 'silent' : 'info' }, bodyLimit: 16 * 1024 });
   const origins = env.CORS_ORIGINS.split(',').map((value) => value.trim()).filter(Boolean);
-  await app.register(cors, { origin: origins, methods: ['GET', 'HEAD', 'OPTIONS'], maxAge: 600 });
+  await app.register(cors, { origin: origins, credentials: true, methods: ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Idempotency-Key'], maxAge: 600 });
   app.addHook('onRequest', async (request, reply) => {
     if (request.url.length > 2048) return reply.code(414).send({ error: { code: 'URI_TOO_LONG', message: 'Yêu cầu quá dài.' } });
   });
   app.setErrorHandler((error, request, reply) => {
-    request.log.error({ err: error }, 'request failed');
+    request.log.error({ name: (error as Error).name }, 'request failed');
     return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Đã có lỗi xảy ra.' } });
   });
   app.get('/health', async () => ({ status: 'ok' }));
@@ -27,5 +28,6 @@ export async function createApp() {
     catch { return reply.code(503).send({ status: 'unavailable' }); }
   });
   await registerCatalogRoutes(app);
+  await registerCommerceRoutes(app);
   return app;
 }

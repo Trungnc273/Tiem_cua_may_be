@@ -89,4 +89,12 @@ test('O: production mode excludes TEST-only catalog data', skipOptions, async ()
   assert.equal(result.body.pagination.total, 0);
   const categories = await fetchJson<CategoryList>('/api/v1/public/categories', 'http://127.0.0.1:4001');
   assert.equal(categories.body.data.length, 0);
+  const variant = (await pool!.query("SELECT id FROM product_variants WHERE sku='TCM-TEST-1-M'")).rows[0].id as string;
+  const cart = await fetch('http://127.0.0.1:4001/api/v1/public/cart');
+  const cookie = cart.headers.get('set-cookie')?.split(';')[0] ?? '';
+  const attempt = await fetch('http://127.0.0.1:4001/api/v1/public/cart/items', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ variantId: variant, quantity: 1 }) });
+  assert.equal(attempt.status, 404);
+  const order = await fetch('http://127.0.0.1:4001/api/v1/public/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie, 'Idempotency-Key': '6b7ed87a-7ed2-408b-9662-ccbfdf39b163' }, body: JSON.stringify({ customerName: 'QA', customerPhone: '0901234567', deliveryAddress: 'Test Address 123' }) });
+  assert.equal(order.status, 409);
+  assert.equal(((await order.json()) as { error: { code: string } }).error.code, 'SHIPPING_NOT_CONFIGURED');
 });
