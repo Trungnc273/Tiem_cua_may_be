@@ -23,6 +23,7 @@ try {
   await pool.query("DELETE FROM orders WHERE provenance='TEST'");
   await pool.query("DELETE FROM cart_items WHERE cart_session_id IN (SELECT id FROM cart_sessions WHERE provenance='TEST')");
   await pool.query("DELETE FROM cart_sessions WHERE provenance='TEST'");
+  await pool.query('DELETE FROM categories c WHERE c.provenance=$1 AND NOT(c.slug=ANY($2::text[])) AND NOT EXISTS(SELECT 1 FROM products p WHERE p.category_id=c.id)', ['TEST', categories.map(([slug]) => slug)]);
   for (const [i, [slug, name, icon]] of categories.entries()) {
     await pool.query(`INSERT INTO categories(slug,name,icon_key,sort_order,is_active,provenance) VALUES($1,$2,$3,$4,true,'TEST') ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,icon_key=EXCLUDED.icon_key,sort_order=EXCLUDED.sort_order,is_active=true,provenance='TEST'`, [slug, name, icon, i + 1]);
   }
