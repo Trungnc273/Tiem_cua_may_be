@@ -25,11 +25,11 @@ export const productVariants = pgTable('product_variants', {
 });
 export const productImages = pgTable('product_images', {
   id: uuid('id').defaultRandom().primaryKey(), productId: uuid('product_id').notNull(), variantId: uuid('variant_id'),
-  url: text('url').notNull(), altText: varchar('alt_text', { length: 180 }).notNull(), sortOrder: integer('sort_order').notNull(),
+  url: text('url'), storageKey: text('storage_key').unique(), altText: varchar('alt_text', { length: 180 }).notNull(), sortOrder: integer('sort_order').notNull(),
   isPrimary: boolean('is_primary').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 export const productMediaFiles = pgTable('product_media_files', {
-  id: uuid('id').defaultRandom().primaryKey(), storageKey: varchar('storage_key', { length: 48 }).notNull().unique(), contentType: varchar('content_type', { length: 32 }).notNull(),
+  id: uuid('id').defaultRandom().primaryKey(), storageKey: text('storage_key').notNull().unique(), contentType: varchar('content_type', { length: 32 }).notNull(),
   byteSize: integer('byte_size').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 export const storeSettings = pgTable('store_settings', {
@@ -53,7 +53,7 @@ export const orders = pgTable('orders', {
 }, (table) => [unique('orders_cart_idempotency_uq').on(table.cartSessionId, table.idempotencyKey)]);
 export const orderItems = pgTable('order_items', {
   id: uuid('id').defaultRandom().primaryKey(), orderId: uuid('order_id').notNull().references(() => orders.id), productId: uuid('product_id').notNull().references(() => products.id), variantId: uuid('variant_id').notNull().references(() => productVariants.id),
-  productName: varchar('product_name', { length: 180 }).notNull(), variantSku: varchar('variant_sku', { length: 80 }).notNull(), colorName: varchar('color_name', { length: 80 }).notNull(), size: varchar('size', { length: 40 }).notNull(), imageUrl: text('image_url').notNull(),
+  productName: varchar('product_name', { length: 180 }).notNull(), variantSku: varchar('variant_sku', { length: 80 }).notNull(), colorName: varchar('color_name', { length: 80 }).notNull(), size: varchar('size', { length: 40 }).notNull(), imageUrl: text('image_url').notNull(), imageStorageKey: text('image_storage_key'),
   originalUnitPriceVnd: integer('original_unit_price_vnd').notNull(), discountPercent: integer('discount_percent').notNull(), saleUnitPriceVnd: integer('sale_unit_price_vnd').notNull(), quantity: integer('quantity').notNull(), lineTotalVnd: bigint('line_total_vnd', { mode: 'number' }).notNull(), createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 export const adminUsers = pgTable('admin_users', {

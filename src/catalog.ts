@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from './db.js';
+import { productMediaStorage } from './product-media-storage.js';
 import { catalogQuerySchema } from './validation.js';
 import { z } from 'zod';
 const slugSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(140);
@@ -45,10 +46,11 @@ export async function registerCatalogRoutes(app: FastifyInstance): Promise<void>
         COALESCE(min(${saleSql}), p.base_price_vnd)::int AS "priceVnd",
         (COALESCE(min(${saleSql}), p.base_price_vnd) < COALESCE(min(COALESCE(v.price_override_vnd, p.base_price_vnd)), p.base_price_vnd)) AS "hasDiscount",
         COALESCE((SELECT i.url FROM product_images i WHERE i.product_id = p.id ORDER BY i.is_primary DESC, i.sort_order ASC, i.id LIMIT 1), '') AS image,
+        (SELECT i.storage_key FROM product_images i WHERE i.product_id=p.id ORDER BY i.is_primary DESC,i.sort_order ASC,i.id LIMIT 1) AS "imageStorageKey",
         (SELECT array_agg(DISTINCT COALESCE(vv.color_hex, vv.display_color)) FILTER (WHERE COALESCE(vv.color_hex, vv.display_color) IS NOT NULL) FROM product_variants vv WHERE vv.product_id = p.id AND vv.is_active = true) AS colors
       FROM products p JOIN categories c ON c.id = p.category_id JOIN product_variants v ON v.product_id = p.id AND v.is_active = true
       WHERE ${where} GROUP BY p.id, c.id ORDER BY ${orderBy[query.sort]} LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, dataValues);
-    return reply.send({ data: data.rows, pagination: { page: query.page, limit: query.limit, total: count.rows[0]?.total ?? 0, pages: Math.ceil((count.rows[0]?.total ?? 0) / query.limit) } });
+    return reply.send({ data: data.rows.map((row) => { const { imageStorageKey, ...publicRow } = row; return { ...publicRow, image: imageStorageKey ? productMediaStorage.publicUrl(String(imageStorageKey)) : row.image }; }), pagination: { page: query.page, limit: query.limit, total: count.rows[0]?.total ?? 0, pages: Math.ceil((count.rows[0]?.total ?? 0) / query.limit) } });
   };
   app.get('/api/v1/public/products', listProducts);
   app.get('/api/v1/public/categories/:slug/products', listProducts);
@@ -62,10 +64,10 @@ export async function registerCatalogRoutes(app: FastifyInstance): Promise<void>
     if (!product) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Không tìm thấy sản phẩm.' } });
     const [variants, images] = await Promise.all([
       pool.query(`SELECT id AS "variantId",size, color_code AS "colorCode", color_name AS "colorName", display_color AS "displayColor", color_hex AS "colorHex", COALESCE(price_override_vnd, $2::integer)::int AS "originalPriceVnd", floor((COALESCE(price_override_vnd,$2::integer)::numeric * (100-$3) + 50)/100)::int AS "salePriceVnd", $3::integer AS "discountPercent", (floor((COALESCE(price_override_vnd,$2::integer)::numeric * (100-$3) + 50)/100) < COALESCE(price_override_vnd, $2::integer)) AS "hasDiscount", COALESCE(price_override_vnd, $2::integer)::int AS "priceVnd", stock_quantity AS "stockQuantity", CASE WHEN stock_quantity > 0 THEN 'IN_STOCK' ELSE 'OUT_OF_STOCK' END AS availability FROM product_variants WHERE product_id=$1 AND is_active=true ORDER BY size, color_code, id`, [product.id, product.basePriceVnd, product.discountPercent]),
-      pool.query(`SELECT i.url, i.alt_text AS "altText", i.sort_order AS "sortOrder", i.is_primary AS "isPrimary", i.variant_id AS "variantId" FROM product_images i WHERE i.product_id=$1 AND (i.variant_id IS NULL OR EXISTS(SELECT 1 FROM product_variants v WHERE v.id=i.variant_id AND v.is_active)) ORDER BY i.is_primary DESC, i.sort_order ASC, i.id`, [product.id]),
+      pool.query(`SELECT i.url, i.storage_key AS "storageKey", i.alt_text AS "altText", i.sort_order AS "sortOrder", i.is_primary AS "isPrimary", i.variant_id AS "variantId" FROM product_images i WHERE i.product_id=$1 AND (i.variant_id IS NULL OR EXISTS(SELECT 1 FROM product_variants v WHERE v.id=i.variant_id AND v.is_active)) ORDER BY i.is_primary DESC, i.sort_order ASC, i.id`, [product.id]),
     ]);
     delete product.id;
-    return reply.send({ data: { ...product, variants: variants.rows, images: images.rows } });
+    return reply.send({ data: { ...product, variants: variants.rows, images: images.rows.map((image) => { const { storageKey, ...publicImage } = image; return { ...publicImage, url: storageKey ? productMediaStorage.publicUrl(String(storageKey)) : image.url }; }) } });
   });
 }
 

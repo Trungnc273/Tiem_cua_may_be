@@ -20,6 +20,7 @@
     "admin:create": "tsx scripts/create-admin.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1144.0",
     "@fastify/cors": "11.3.0",
     "dotenv": "17.4.2",
     "drizzle-orm": "0.45.2",
