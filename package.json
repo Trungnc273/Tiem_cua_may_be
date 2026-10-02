@@ -3,7 +3,9 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.18.0" },
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "packageManager": "pnpm@12.4.1",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -11,7 +13,7 @@
     "start": "node dist/src/server.js",
     "lint": "eslint src tests scripts",
     "typecheck": "tsc --noEmit",
-    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/catalog.test.ts",
+    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/*.test.ts",
     "test:integration": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/integration/*.test.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed:test": "tsx scripts/seed-test.ts",
@@ -21,7 +23,7 @@
     "@fastify/cors": "11.3.0",
     "dotenv": "17.4.2",
     "drizzle-orm": "0.45.2",
-    "fastify": "5.12.4",
+    "fastify": "5.12.5",
     "pg": "8.23.0",
     "zod": "4.6.5"
   },

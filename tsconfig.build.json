@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "rootDir": ".", "outDir": "dist", "noEmit": false, "allowImportingTsExtensions": false },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "scripts/migrate.ts", "scripts/seed-test.ts", "scripts/create-admin.ts", "scripts/safe-test-target.ts"]
 }

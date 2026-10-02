@@ -64,7 +64,7 @@ export async function transactional<T>(work: (client: import('pg').PoolClient) =
 export async function registerCommerceRoutes(app: FastifyInstance): Promise<void> {
   const enforceOrigin = async (request: FastifyRequest, reply: FastifyReply) => {
     const origin = request.headers.origin;
-    if (origin && !origins.includes(origin)) return invalid(reply, 'ORIGIN_NOT_ALLOWED', 'Request origin is not allowed.', 403);
+    if (!origin || !origins.includes(origin)) return invalid(reply, 'ORIGIN_NOT_ALLOWED', 'Request origin is not allowed.', 403);
   };
   await registerProductAdminRoutes(app);
   app.get('/api/v1/public/store-settings', async (_request, reply) => {

@@ -1,12 +1,16 @@
 import 'dotenv/config';
 import pg from 'pg';
 import { hashAdminPassword } from '../src/commerce.js';
+import { assertSafeTestTarget } from './safe-test-target.js';
 
 const { Pool } = pg;
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
 const mode = process.env.CATALOG_MODE ?? 'production';
 if (!['production', 'test'].includes(mode)) throw new Error('CATALOG_MODE must be production or test.');
-if (process.env.NODE_ENV === 'production' && mode === 'test') throw new Error('Refusing to create a TEST admin in production mode.');
+if (process.env.NODE_ENV === 'production' && process.env.TCM_ENVIRONMENT !== 'production' && process.env.TCM_ENVIRONMENT !== 'staging') throw new Error('Production runtime must explicitly declare TCM_ENVIRONMENT.');
+if (mode === 'test') assertSafeTestTarget('TEST admin creation');
+if (process.env.TCM_ENVIRONMENT === 'production' && mode !== 'production') throw new Error('Production admin creation requires production catalog provenance.');
+if (process.env.TCM_ENVIRONMENT === 'staging' && mode !== 'test') throw new Error('Staging admin creation requires TEST catalog provenance.');
 const provenance = mode === 'test' ? 'TEST' : 'PRODUCTION';
 const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
 const password = process.env.ADMIN_PASSWORD;

@@ -1,8 +1,9 @@
 import 'dotenv/config';
 import pg from 'pg';
+import { assertSafeTestTarget } from './safe-test-target.js';
 const { Pool } = pg;
-if (process.env.NODE_ENV === 'production' || process.env.CATALOG_MODE !== 'test') throw new Error('Test seed requires NODE_ENV != production and CATALOG_MODE=test');
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+assertSafeTestTarget('Test fixture seed');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const categories = [
   ['vay-dam', 'Váy đầm', 'dress'], ['ao', 'Áo', 'shirt'], ['quan', 'Quần', 'pants'], ['chan-vay', 'Chân váy', 'skirt'], ['phu-kien', 'Phụ kiện', 'accessory'],

@@ -56,7 +56,7 @@ async function requireActor(request: FastifyRequest, reply: FastifyReply) {
 function originAllowed(request: FastifyRequest, reply: FastifyReply) {
   const origin = request.headers.origin;
   const allowed = (process.env.CORS_ORIGINS ?? 'http://localhost:3000').split(',').map((value) => value.trim());
-  return origin && !allowed.includes(origin) ? invalid(reply, 'ORIGIN_NOT_ALLOWED', 'Request origin is not allowed.', 403) : null;
+  return !origin || !allowed.includes(origin) ? invalid(reply, 'ORIGIN_NOT_ALLOWED', 'Request origin is not allowed.', 403) : null;
 }
 
 export async function registerProductAdminRoutes(app: FastifyInstance) {
