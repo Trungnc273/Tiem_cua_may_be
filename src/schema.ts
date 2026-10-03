@@ -34,7 +34,8 @@ export const productMediaFiles = pgTable('product_media_files', {
 });
 export const storeSettings = pgTable('store_settings', {
   provenance: catalogProvenance('provenance').primaryKey(), contactPhone: varchar('contact_phone', { length: 24 }).notNull(), messengerUrl: text('messenger_url').notNull(),
-  defaultShippingFeeVnd: integer('default_shipping_fee_vnd'), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+  orderNotificationTo: varchar('order_notification_to', { length: 254 }).notNull(), orderNotificationsEnabled: boolean('order_notifications_enabled').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
 });
 export const cartSessions = pgTable('cart_sessions', {
   id: uuid('id').defaultRandom().primaryKey(), tokenHash: char('token_hash', { length: 64 }).notNull().unique(), provenance: catalogProvenance('provenance').notNull(),
@@ -48,9 +49,24 @@ export const orders = pgTable('orders', {
   id: uuid('id').defaultRandom().primaryKey(), orderCode: varchar('order_code', { length: 20 }).notNull().unique(), provenance: catalogProvenance('provenance').notNull(),
   cartSessionId: uuid('cart_session_id').notNull().references(() => cartSessions.id), idempotencyKey: uuid('idempotency_key').notNull(), requestHash: char('request_hash', { length: 64 }).notNull(),
   customerName: varchar('customer_name', { length: 120 }).notNull(), customerPhone: varchar('customer_phone', { length: 24 }).notNull(), deliveryAddress: varchar('delivery_address', { length: 500 }).notNull(), customerNote: varchar('customer_note', { length: 1000 }).notNull(),
-  status: orderStatus('status').notNull(), subtotalVnd: bigint('subtotal_vnd', { mode: 'number' }).notNull(), shippingFeeVnd: integer('shipping_fee_vnd').notNull(), totalVnd: bigint('total_vnd', { mode: 'number' }).notNull(),
+  status: orderStatus('status').notNull(), subtotalVnd: bigint('subtotal_vnd', { mode: 'number' }).notNull(), shippingFeeVnd: integer('shipping_fee_vnd'), totalVnd: bigint('total_vnd', { mode: 'number' }),
+  shippingStatus: varchar('shipping_status', { length: 16 }).notNull(), provinceCode: varchar('province_code', { length: 12 }), provinceLabel: varchar('province_label', { length: 120 }),
+  shippingEstimateRuleId: uuid('shipping_estimate_rule_id'), shippingEstimateRuleSnapshot: varchar('shipping_estimate_rule_snapshot', { length: 120 }),
+  shippingEstimateMinVnd: integer('shipping_estimate_min_vnd'), shippingEstimateMaxVnd: integer('shipping_estimate_max_vnd'),
+  carrierCode: varchar('carrier_code', { length: 24 }), carrierCustomName: varchar('carrier_custom_name', { length: 120 }), trackingNumber: varchar('tracking_number', { length: 120 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
 }, (table) => [unique('orders_cart_idempotency_uq').on(table.cartSessionId, table.idempotencyKey)]);
+export const shippingEstimateRules = pgTable('shipping_estimate_rules', {
+  id: uuid('id').defaultRandom().primaryKey(), provenance: catalogProvenance('provenance').notNull(), provinceCode: varchar('province_code', { length: 12 }), displayName: varchar('display_name', { length: 120 }).notNull(),
+  estimateMinVnd: integer('estimate_min_vnd').notNull(), estimateMaxVnd: integer('estimate_max_vnd').notNull(), isFallback: boolean('is_fallback').notNull(), isActive: boolean('is_active').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+});
+export const orderNotifications = pgTable('order_notifications', {
+  id: uuid('id').defaultRandom().primaryKey(), orderId: uuid('order_id').notNull().references(() => orders.id, { onDelete: 'cascade' }),
+  channel: varchar('channel', { length: 16 }).notNull(), recipient: varchar('recipient', { length: 254 }).notNull(), status: varchar('status', { length: 16 }).notNull(),
+  attempts: integer('attempts').notNull(), lastErrorCode: varchar('last_error_code', { length: 80 }), nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull(),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }), createdAt: timestamp('created_at', { withTimezone: true }).notNull(), sentAt: timestamp('sent_at', { withTimezone: true }),
+});
 export const orderItems = pgTable('order_items', {
   id: uuid('id').defaultRandom().primaryKey(), orderId: uuid('order_id').notNull().references(() => orders.id), productId: uuid('product_id').notNull().references(() => products.id), variantId: uuid('variant_id').notNull().references(() => productVariants.id),
   productName: varchar('product_name', { length: 180 }).notNull(), variantSku: varchar('variant_sku', { length: 80 }).notNull(), colorName: varchar('color_name', { length: 80 }).notNull(), size: varchar('size', { length: 40 }).notNull(), imageUrl: text('image_url').notNull(), imageStorageKey: text('image_storage_key'),

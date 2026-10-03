@@ -18,7 +18,9 @@ const products = [
 ];
 try {
   await pool.query('BEGIN');
-  await pool.query("UPDATE store_settings SET default_shipping_fee_vnd=25000,updated_at=now() WHERE provenance='TEST'");
+  await pool.query("DELETE FROM shipping_estimate_rules WHERE provenance='TEST'");
+  await pool.query("INSERT INTO shipping_estimate_rules(provenance,province_code,display_name,estimate_min_vnd,estimate_max_vnd,is_fallback) VALUES('TEST',NULL,'Tỉnh/thành khác',25000,40000,true)");
+  await pool.query("INSERT INTO shipping_estimate_rules(provenance,province_code,display_name,estimate_min_vnd,estimate_max_vnd,is_fallback) VALUES('TEST','79','Thành phố Hồ Chí Minh',30000,45000,false)");
   await pool.query("DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE provenance='TEST')");
   await pool.query("DELETE FROM orders WHERE provenance='TEST'");
   await pool.query("DELETE FROM cart_items WHERE cart_session_id IN (SELECT id FROM cart_sessions WHERE provenance='TEST')");
@@ -39,6 +41,6 @@ try {
     await pool.query(`INSERT INTO product_images(product_id,variant_id,url,alt_text,sort_order,is_primary) VALUES($1,NULL,$2,$3,0,true),($1,$4,$5,$6,1,false)`, [productId, `/demo/${item.image}`, item.name, variant.rows[0].id, `/demo/${item.detailImage ?? item.image}`, `${item.name} - ảnh chi tiết`]);
   }
   await pool.query('COMMIT');
-  console.log(`Seeded ${categories.length} TEST categories and ${products.length} TEST products.`);
+  console.log(`Seeded ${categories.length} TEST categories, ${products.length} TEST products and two TEST shipping estimates.`);
 } catch (error) { await pool.query('ROLLBACK'); throw error; }
 finally { await pool.end(); }

@@ -4,6 +4,8 @@ import { registerProductAdminRoutes } from './product-admin.js';
 import { z } from 'zod';
 import { pool } from './db.js';
 import { productMediaStorage } from './product-media-storage.js';
+import { processPendingOrderNotifications } from './order-notifications.js';
+import { provinceLabel, resolveShippingEstimate, vietnamProvinces } from './shipping-estimates.js';
 
 export const mode = process.env.CATALOG_MODE ?? 'production';
 export const provenance = mode === 'test' ? 'TEST' : 'PRODUCTION';
@@ -69,9 +71,17 @@ export async function registerCommerceRoutes(app: FastifyInstance): Promise<void
   };
   await registerProductAdminRoutes(app);
   app.get('/api/v1/public/store-settings', async (_request, reply) => {
-    const result = await pool.query('SELECT contact_phone AS "contactPhone", messenger_url AS "messengerUrl", default_shipping_fee_vnd AS "shippingFeeVnd" FROM store_settings WHERE provenance=$1', [provenance]);
-    const row = result.rows[0] ?? { contactPhone: '0876146498', messengerUrl: 'https://www.facebook.com/tiemcuamay04', shippingFeeVnd: null };
-    return reply.send({ data: { contactPhone: row.contactPhone, messengerUrl: row.messengerUrl, shippingConfigured: row.shippingFeeVnd !== null } });
+    const result = await pool.query('SELECT contact_phone AS "contactPhone",messenger_url AS "messengerUrl" FROM store_settings WHERE provenance=$1', [provenance]);
+    const row = result.rows[0] ?? { contactPhone: '0876146498', messengerUrl: 'https://www.facebook.com/tiemcuamay04' };
+    return reply.send({ data: row });
+  });
+  app.get('/api/v1/public/shipping/provinces', async (_request, reply) => reply.send({ data: vietnamProvinces.map(([code, label]) => ({ code, label })) }));
+  app.get<{ Querystring: { provinceCode?: string } }>('/api/v1/public/shipping/estimate', async (request, reply) => {
+    noStore(reply);
+    const code = request.query.provinceCode ?? '';
+    if (!provinceLabel(code)) return invalid(reply, 'INVALID_PROVINCE', 'Vui lòng chọn tỉnh hoặc thành phố hợp lệ.');
+    const estimate = await resolveShippingEstimate((sql, values) => pool.query(sql, values), provenance, code);
+    return reply.send({ data: { provinceCode: code, provinceLabel: provinceLabel(code), estimate } });
   });
   app.get('/api/v1/public/cart/count', async (request, reply) => {
     const token = cookieValue(request, cartCookie);
@@ -84,14 +94,10 @@ export async function registerCommerceRoutes(app: FastifyInstance): Promise<void
   app.get('/api/v1/public/cart', async (request, reply) => {
     noStore(reply);
     const session = await ensureCart(request, reply);
-    const [settings, items] = await Promise.all([
-      pool.query('SELECT default_shipping_fee_vnd AS fee FROM store_settings WHERE provenance=$1', [provenance]),
-      pool.query(`SELECT ci.id AS "itemId",v.id AS "variantId",p.slug,p.name AS "productName",v.sku,v.size,v.color_name AS "colorName",v.stock_quantity AS stock,(v.is_active AND p.status='ACTIVE') AS available,ci.quantity,COALESCE(v.price_override_vnd,p.base_price_vnd) AS "originalPriceVnd",p.discount_percent AS "discountPercent",COALESCE((SELECT i.url FROM product_images i WHERE i.product_id=p.id AND (i.variant_id IS NULL OR i.variant_id=v.id) ORDER BY (i.variant_id=v.id) DESC NULLS LAST,i.is_primary DESC,i.sort_order,i.id LIMIT 1),'') AS "imageUrl",(SELECT i.storage_key FROM product_images i WHERE i.product_id=p.id AND (i.variant_id IS NULL OR i.variant_id=v.id) ORDER BY (i.variant_id=v.id) DESC NULLS LAST,i.is_primary DESC,i.sort_order,i.id LIMIT 1) AS "imageStorageKey" FROM cart_items ci JOIN product_variants v ON v.id=ci.variant_id JOIN products p ON p.id=v.product_id WHERE ci.cart_session_id=$1 ORDER BY ci.created_at,ci.id`, [session]),
-    ]);
+    const items = await pool.query(`SELECT ci.id AS "itemId",v.id AS "variantId",p.slug,p.name AS "productName",v.sku,v.size,v.color_name AS "colorName",v.stock_quantity AS stock,(v.is_active AND p.status='ACTIVE') AS available,ci.quantity,COALESCE(v.price_override_vnd,p.base_price_vnd) AS "originalPriceVnd",p.discount_percent AS "discountPercent",COALESCE((SELECT i.url FROM product_images i WHERE i.product_id=p.id AND (i.variant_id IS NULL OR i.variant_id=v.id) ORDER BY (i.variant_id=v.id) DESC NULLS LAST,i.is_primary DESC,i.sort_order,i.id LIMIT 1),'') AS "imageUrl",(SELECT i.storage_key FROM product_images i WHERE i.product_id=p.id AND (i.variant_id IS NULL OR i.variant_id=v.id) ORDER BY (i.variant_id=v.id) DESC NULLS LAST,i.is_primary DESC,i.sort_order,i.id LIMIT 1) AS "imageStorageKey" FROM cart_items ci JOIN product_variants v ON v.id=ci.variant_id JOIN products p ON p.id=v.product_id WHERE ci.cart_session_id=$1 ORDER BY ci.created_at,ci.id`, [session]);
     const rows = items.rows.map((item: DbRow) => { const { imageStorageKey, ...publicItem } = item; return { ...publicItem, imageUrl: imageStorageKey ? productMediaStorage.publicUrl(String(imageStorageKey)) : item.imageUrl, originalPriceVnd: Number(item.originalPriceVnd), discountPercent: Number(item.discountPercent), salePriceVnd: salePrice(Number(item.originalPriceVnd), Number(item.discountPercent)), hasDiscount: salePrice(Number(item.originalPriceVnd), Number(item.discountPercent)) < Number(item.originalPriceVnd), lineTotalVnd: salePrice(Number(item.originalPriceVnd), Number(item.discountPercent)) * Number(item.quantity), stock: Number(item.stock) }; });
     const subtotalVnd = rows.reduce((total: number, item: DbRow) => total + Number(item.lineTotalVnd), 0);
-    const fee = settings.rows[0]?.fee;
-    return reply.send({ data: { items: rows, subtotalVnd, shippingFeeVnd: fee === null || fee === undefined ? null : Number(fee), shippingConfigured: fee !== null && fee !== undefined, totalVnd: fee === null || fee === undefined ? null : subtotalVnd + Number(fee) } });
+    return reply.send({ data: { items: rows, subtotalVnd } });
   });
   app.post('/api/v1/public/cart/items', { preHandler: enforceOrigin }, async (request, reply) => {
     noStore(reply);
@@ -142,37 +148,43 @@ export async function registerCommerceRoutes(app: FastifyInstance): Promise<void
     noStore(reply);
     const key = uuid.safeParse(request.headers['idempotency-key']);
     if (!key.success) return invalid(reply, 'IDEMPOTENCY_KEY_REQUIRED', 'A valid request key is required.');
-    const parsed = z.object({ customerName: z.string().trim().min(1).max(120), customerPhone: phoneSchema, deliveryAddress: z.string().trim().min(5).max(500), note: z.string().max(1000).optional().default('') }).safeParse(request.body);
-    if (!parsed.success) return invalid(reply, 'INVALID_ORDER', 'Check the name, phone number, address, and note.');
+    const parsed = z.object({ customerName: z.string().trim().min(1).max(120), customerPhone: phoneSchema, provinceCode: z.string().length(2), provinceLabel: z.string().trim().min(1).max(120), deliveryAddress: z.string().trim().min(5).max(500), note: z.string().max(1000).optional().default('') }).safeParse(request.body);
+    if (!parsed.success) return invalid(reply, 'INVALID_ORDER', 'Check the name, phone number, province, address, and note.');
+    const canonicalProvinceLabel = provinceLabel(parsed.data.provinceCode);
+    if (!canonicalProvinceLabel || parsed.data.provinceLabel !== canonicalProvinceLabel) return invalid(reply, 'INVALID_PROVINCE', 'Vui lòng chọn tỉnh hoặc thành phố trong danh sách.');
     const sessionId = await ensureCart(request, reply);
     const requestHash = sha(JSON.stringify(parsed.data));
     try {
       const result = await transactional(async (client) => {
         await client.query('SELECT id FROM cart_sessions WHERE id=$1 FOR UPDATE', [sessionId]);
-        const dupe = await client.query('SELECT id,order_code,request_hash FROM orders WHERE cart_session_id=$1 AND idempotency_key=$2', [sessionId, key.data]);
-        if (dupe.rows[0]) return dupe.rows[0].request_hash === requestHash ? { existing: true, code: dupe.rows[0].order_code } : { error: 'IDEMPOTENCY_CONFLICT' };
-        const settings = await client.query('SELECT default_shipping_fee_vnd AS fee FROM store_settings WHERE provenance=$1 FOR UPDATE', [provenance]);
-        if (settings.rows[0]?.fee === null || settings.rows[0]?.fee === undefined) return { error: 'SHIPPING_NOT_CONFIGURED' };
+        const dupe = await client.query('SELECT id,order_code,request_hash,subtotal_vnd AS "subtotalVnd",shipping_estimate_min_vnd AS "shippingEstimateMinVnd",shipping_estimate_max_vnd AS "shippingEstimateMaxVnd" FROM orders WHERE cart_session_id=$1 AND idempotency_key=$2', [sessionId, key.data]);
+        if (dupe.rows[0]) return dupe.rows[0].request_hash === requestHash ? { existing: true, code: dupe.rows[0].order_code, subtotalVnd: Number(dupe.rows[0].subtotalVnd), shippingEstimateMinVnd: dupe.rows[0].shippingEstimateMinVnd === null ? null : Number(dupe.rows[0].shippingEstimateMinVnd), shippingEstimateMaxVnd: dupe.rows[0].shippingEstimateMaxVnd === null ? null : Number(dupe.rows[0].shippingEstimateMaxVnd) } : { error: 'IDEMPOTENCY_CONFLICT' };
+        const settings = await client.query('SELECT order_notification_to AS "notificationTo",order_notifications_enabled AS "notificationsEnabled" FROM store_settings WHERE provenance=$1 FOR UPDATE', [provenance]);
+        const estimateResult = await client.query('SELECT id,display_name AS label,estimate_min_vnd AS "minVnd",estimate_max_vnd AS "maxVnd",is_fallback AS "isFallback" ' +
+          'FROM shipping_estimate_rules WHERE provenance=$1 AND is_active AND ((NOT is_fallback AND province_code=$2) OR is_fallback) ORDER BY is_fallback ASC LIMIT 1 FOR SHARE', [provenance, parsed.data.provinceCode]);
+        const estimate = estimateResult.rows[0] ?? null;
         const items = await client.query(`SELECT ci.variant_id,ci.quantity,v.product_id,v.sku,v.size,v.color_name,v.stock_quantity,v.is_active,p.status,p.provenance,p.name,p.discount_percent,COALESCE(v.price_override_vnd,p.base_price_vnd)::int AS original_price,COALESCE((SELECT i.url FROM product_images i WHERE i.product_id=p.id AND (i.variant_id IS NULL OR i.variant_id=v.id) ORDER BY (i.variant_id=v.id) DESC NULLS LAST,i.is_primary DESC,i.sort_order,i.id LIMIT 1),'') AS image_url,(SELECT i.storage_key FROM product_images i WHERE i.product_id=p.id AND (i.variant_id IS NULL OR i.variant_id=v.id) ORDER BY (i.variant_id=v.id) DESC NULLS LAST,i.is_primary DESC,i.sort_order,i.id LIMIT 1) AS image_storage_key FROM cart_items ci JOIN product_variants v ON v.id=ci.variant_id JOIN products p ON p.id=v.product_id WHERE ci.cart_session_id=$1 ORDER BY ci.variant_id FOR UPDATE OF v,p`, [sessionId]);
         if (!items.rows.length) return { error: 'CART_EMPTY' };
         if (items.rows.some((item: DbRow) => !item.is_active || item.status !== 'ACTIVE' || (mode === 'production' && item.provenance !== 'PRODUCTION'))) return { error: 'VARIANT_UNAVAILABLE' };
         for (const item of items.rows) if (Number(item.quantity) > Number(item.stock_quantity)) return { error: 'INSUFFICIENT_STOCK' };
         const enriched: DbRow[] = items.rows.map((item: DbRow) => ({ ...item, original: Number(item.original_price), discount: Number(item.discount_percent), sale: salePrice(Number(item.original_price), Number(item.discount_percent)), quantity: Number(item.quantity) }));
         const subtotal = enriched.reduce((sum: number, item: DbRow) => sum + Number(item.sale) * Number(item.quantity), 0);
-        const fee = Number(settings.rows[0].fee);
-        const code = `TCM-${randomBytes(5).toString('hex').toUpperCase()}`;
-        const created = await client.query(`INSERT INTO orders(order_code,provenance,cart_session_id,idempotency_key,request_hash,customer_name,customer_phone,delivery_address,customer_note,subtotal_vnd,shipping_fee_vnd,total_vnd) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [code, provenance, sessionId, key.data, requestHash, parsed.data.customerName, parsed.data.customerPhone, parsed.data.deliveryAddress, parsed.data.note, subtotal, fee, subtotal + fee]);
+        const code = 'TCM-' + randomBytes(5).toString('hex').toUpperCase();
+        const created = await client.query('INSERT INTO orders(order_code,provenance,cart_session_id,idempotency_key,request_hash,customer_name,customer_phone,delivery_address,customer_note,subtotal_vnd,shipping_fee_vnd,total_vnd,shipping_status,province_code,province_label,shipping_estimate_rule_id,shipping_estimate_rule_snapshot,shipping_estimate_min_vnd,shipping_estimate_max_vnd) ' +
+          "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL,NULL,'ESTIMATED',$11,$12,$13,$14,$15,$16) RETURNING id", [code, provenance, sessionId, key.data, requestHash, parsed.data.customerName, parsed.data.customerPhone, parsed.data.deliveryAddress, parsed.data.note, subtotal, parsed.data.provinceCode, canonicalProvinceLabel, estimate?.id ?? null, estimate?.label ?? null, estimate?.minVnd ?? null, estimate?.maxVnd ?? null]);
         const orderId = created.rows[0].id as string;
         for (const item of enriched) {
           const updated = await client.query('UPDATE product_variants SET stock_quantity=stock_quantity-$1,updated_at=now() WHERE id=$2 AND stock_quantity >= $1 RETURNING id', [item.quantity, item.variant_id]);
           if (!updated.rowCount) throw new Error('STOCK_RACE');
           await client.query(`INSERT INTO order_items(order_id,product_id,variant_id,product_name,variant_sku,color_name,size,image_url,image_storage_key,original_unit_price_vnd,discount_percent,sale_unit_price_vnd,quantity,line_total_vnd) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [orderId, item.product_id, item.variant_id, item.name, item.sku, item.color_name, item.size, item.image_url ?? '', item.image_storage_key, item.original, item.discount, item.sale, item.quantity, Number(item.sale) * Number(item.quantity)]);
         }
+        if (settings.rows[0].notificationsEnabled) await client.query('INSERT INTO order_notifications(order_id,recipient) VALUES($1,$2) ON CONFLICT(order_id,channel) DO NOTHING', [orderId, settings.rows[0].notificationTo]);
         await client.query('DELETE FROM cart_items WHERE cart_session_id=$1', [sessionId]);
-        return { existing: false, code, status: 'NEW' };
+        return { existing: false, code, status: 'NEW', subtotalVnd: subtotal, shippingEstimateMinVnd: estimate?.minVnd === undefined ? null : Number(estimate.minVnd), shippingEstimateMaxVnd: estimate?.maxVnd === undefined ? null : Number(estimate.maxVnd) };
       });
-      if (result.error) return invalid(reply, result.error, result.error === 'SHIPPING_NOT_CONFIGURED' ? 'The store has not configured its shipping fee yet.' : result.error === 'CART_EMPTY' ? 'Your cart is empty.' : 'The requested quantity is no longer available.', result.error === 'SHIPPING_NOT_CONFIGURED' ? 409 : result.error === 'CART_EMPTY' ? 400 : 409);
-      return reply.code(result.existing ? 200 : 201).send({ data: { orderCode: result.code, status: result.existing ? 'NEW' : 'NEW' } });
+      if (result.error) return invalid(reply, result.error, result.error === 'IDEMPOTENCY_CONFLICT' ? 'Yêu cầu này đã được gửi với thông tin khác.' : result.error === 'CART_EMPTY' ? 'Giỏ hàng đang trống.' : 'Sản phẩm hoặc số lượng hiện không còn khả dụng.', result.error === 'CART_EMPTY' ? 400 : 409);
+      if (!result.existing) void processPendingOrderNotifications().catch(() => undefined);
+       return reply.code(result.existing ? 200 : 201).send({ data: { orderCode: result.code, status: 'NEW', subtotalVnd: result.subtotalVnd, shippingEstimateMinVnd: result.shippingEstimateMinVnd, shippingEstimateMaxVnd: result.shippingEstimateMaxVnd } });
     } catch (error) { if ((error as Error).message === 'STOCK_RACE') return invalid(reply, 'INSUFFICIENT_STOCK', 'The requested quantity is no longer available.', 409); throw error; }
   });
 
@@ -218,20 +230,56 @@ export async function registerCommerceRoutes(app: FastifyInstance): Promise<void
   app.get<{ Params: { orderId: string } }>('/api/v1/admin/orders/:orderId', async (request, reply) => {
     const actor = await requireAdmin(request, reply); if (!actor) return;
     if (!uuid.safeParse(request.params.orderId).success) return invalid(reply, 'NOT_FOUND', 'Order not found.', 404);
-    const [order, items] = await Promise.all([pool.query(`SELECT id,order_code AS "orderCode",customer_name AS "customerName",customer_phone AS "customerPhone",delivery_address AS "deliveryAddress",customer_note AS note,status,subtotal_vnd AS "subtotalVnd",shipping_fee_vnd AS "shippingFeeVnd",total_vnd AS "totalVnd",created_at AS "createdAt" FROM orders WHERE id=$1 AND provenance=$2`, [request.params.orderId, provenance]), pool.query(`SELECT product_name AS "productName",variant_sku AS sku,color_name AS "colorName",size,image_url AS "imageUrl",image_storage_key AS "imageStorageKey",original_unit_price_vnd AS "originalPriceVnd",discount_percent AS "discountPercent",sale_unit_price_vnd AS "salePriceVnd",quantity,line_total_vnd AS "lineTotalVnd" FROM order_items WHERE order_id=$1 ORDER BY id`, [request.params.orderId])]);
-    if (!order.rows[0]) return invalid(reply, 'NOT_FOUND', 'Order not found.', 404);
-    return reply.send({ data: { ...order.rows[0], items: items.rows.map((item: DbRow) => ({ ...item, imageUrl: item.imageStorageKey ? productMediaStorage.publicUrl(String(item.imageStorageKey)) : item.imageUrl })) } });
+    const [order, items, notification] = await Promise.all([
+      pool.query('SELECT id,order_code AS "orderCode",customer_name AS "customerName",customer_phone AS "customerPhone",delivery_address AS "deliveryAddress",customer_note AS note,status,subtotal_vnd AS "subtotalVnd",shipping_fee_vnd AS "shippingFeeVnd",total_vnd AS "totalVnd",shipping_status AS "shippingStatus",province_code AS "provinceCode",province_label AS "provinceLabel",shipping_estimate_rule_snapshot AS "shippingEstimateRuleSnapshot",shipping_estimate_min_vnd AS "shippingEstimateMinVnd",shipping_estimate_max_vnd AS "shippingEstimateMaxVnd",carrier_code AS "carrierCode",carrier_custom_name AS "carrierCustomName",tracking_number AS "trackingNumber",created_at AS "createdAt" FROM orders WHERE id=$1 AND provenance=$2', [request.params.orderId, provenance]),
+      pool.query('SELECT product_name AS "productName",variant_sku AS sku,color_name AS "colorName",size,image_url AS "imageUrl",image_storage_key AS "imageStorageKey",original_unit_price_vnd AS "originalPriceVnd",discount_percent AS "discountPercent",sale_unit_price_vnd AS "saleUnitPriceVnd",quantity,line_total_vnd AS "lineTotalVnd" FROM order_items WHERE order_id=$1 ORDER BY id', [request.params.orderId]),
+      pool.query("SELECT status,attempts,last_error_code AS \"lastErrorCode\",created_at AS \"createdAt\",sent_at AS \"sentAt\" FROM order_notifications WHERE order_id=$1 AND channel='EMAIL'", [request.params.orderId]),
+    ]);    if (!order.rows[0]) return invalid(reply, 'NOT_FOUND', 'Order not found.', 404);
+    return reply.send({ data: { ...order.rows[0], notification: notification.rows[0] ?? null, items: items.rows.map((item: DbRow) => ({ ...item, imageUrl: item.imageStorageKey ? productMediaStorage.publicUrl(String(item.imageStorageKey)) : item.imageUrl })) } });
   });
-  app.patch<{ Params: { orderId: string } }>('/api/v1/admin/orders/:orderId/status', { preHandler: enforceOrigin }, async (request, reply) => {
+  app.post<{ Params: { orderId: string } }>('/api/v1/admin/orders/:orderId/notification/retry', { preHandler: enforceOrigin }, async (request, reply) => {
+    const actor = await requireAdmin(request, reply); if (!actor) return;
+    if (!uuid.safeParse(request.params.orderId).success) return invalid(reply, 'NOT_FOUND', 'Order not found.', 404);
+    const result = await transactional(async (client) => {
+      const row = await client.query("SELECT id,status FROM order_notifications WHERE order_id=$1 AND channel='EMAIL' FOR UPDATE", [request.params.orderId]);
+      if (!row.rows[0]) return 'MISSING';
+      if (row.rows[0].status !== 'FAILED') return 'NOT_FAILED';
+      await client.query("UPDATE order_notifications SET status='PENDING',attempts=0,last_error_code=NULL,next_attempt_at=now(),locked_until=NULL WHERE id=$1", [row.rows[0].id]);
+      await audit(client, actor, 'ORDER_NOTIFICATION_RETRIED', 'ORDER', request.params.orderId);
+      return 'OK';
+    });
+    if (result === 'MISSING') return invalid(reply, 'NOT_FOUND', 'Order notification not found.', 404);
+    if (result === 'NOT_FAILED') return invalid(reply, 'NOT_RETRYABLE', 'Only a failed notification can be retried.', 409);
+    void processPendingOrderNotifications().catch(() => undefined);
+    return reply.send({ data: { status: 'PENDING' } });
+  });
+  app.patch<{ Params: { orderId: string } }>('/api/v1/admin/orders/:orderId/shipping', { preHandler: enforceOrigin }, async (request, reply) => {
+    const actor = await requireAdmin(request, reply); if (!actor) return;
+    if (!uuid.safeParse(request.params.orderId).success) return invalid(reply, 'NOT_FOUND', 'Order not found.', 404);
+    const parsed = z.object({ carrierCode: z.enum(['GHTK','J_AND_T','VIETTEL_POST','OTHER']), carrierCustomName: z.string().trim().min(1).max(120).optional(), shippingFinalVnd: z.number().int().min(0).max(2000000000), trackingNumber: z.string().trim().max(120).optional().default('') }).refine((value) => value.carrierCode !== 'OTHER' || Boolean(value.carrierCustomName)).safeParse(request.body);
+    if (!parsed.success) return invalid(reply, 'INVALID_ORDER_SHIPPING', 'Kiểm tra đơn vị vận chuyển và phí ship chính thức.');
+    const result = await transactional(async (client) => {
+      const found = await client.query('SELECT id,subtotal_vnd FROM orders WHERE id=$1 AND provenance=$2 FOR UPDATE', [request.params.orderId,provenance]);
+      if (!found.rows[0]) return 'MISSING';
+      const order = found.rows[0];
+      const total = Number(order.subtotal_vnd) + parsed.data.shippingFinalVnd;
+      await client.query("UPDATE orders SET shipping_status='CONFIRMED',shipping_fee_vnd=$1,total_vnd=$2,carrier_code=$3,carrier_custom_name=$4,tracking_number=$5,updated_at=now() WHERE id=$6", [parsed.data.shippingFinalVnd,total,parsed.data.carrierCode,parsed.data.carrierCode === 'OTHER' ? parsed.data.carrierCustomName : null,parsed.data.trackingNumber || null,order.id]);
+      await audit(client, actor, 'ORDER_SHIPPING_CONFIRMED', 'ORDER', order.id, { carrierCode: parsed.data.carrierCode, shippingFinalVnd: parsed.data.shippingFinalVnd, hasTrackingNumber: Boolean(parsed.data.trackingNumber) });
+      return total;
+    });
+    if (result === 'MISSING') return invalid(reply, 'NOT_FOUND', 'Order not found.', 404);
+    return reply.send({ data: { shippingStatus: 'CONFIRMED', shippingFinalVnd: parsed.data.shippingFinalVnd, finalTotalVnd: result } });
+  });  app.patch<{ Params: { orderId: string } }>('/api/v1/admin/orders/:orderId/status', { preHandler: enforceOrigin }, async (request, reply) => {
     const actor = await requireAdmin(request, reply); if (!actor) return;
     const parsed = z.object({ status: z.enum(['CONFIRMED','SHIPPING','COMPLETED','CANCELLED']) }).safeParse(request.body);
     if (!parsed.success || !uuid.safeParse(request.params.orderId).success) return invalid(reply, 'INVALID_STATUS', 'Invalid status update.');
     const result = await transactional(async (client) => {
-      const found = await client.query('SELECT id,status FROM orders WHERE id=$1 AND provenance=$2 FOR UPDATE', [request.params.orderId, provenance]);
+      const found = await client.query('SELECT id,status,shipping_status AS "shippingStatus",shipping_fee_vnd AS "shippingFeeVnd",carrier_code AS "carrierCode" FROM orders WHERE id=$1 AND provenance=$2 FOR UPDATE', [request.params.orderId, provenance]);
       const order = found.rows[0]; if (!order) return 'MISSING';
       const transitions: Record<string, string[]> = { NEW: ['CONFIRMED','CANCELLED'], CONFIRMED: ['SHIPPING','CANCELLED'], SHIPPING: ['COMPLETED'], COMPLETED: [], CANCELLED: [] };
       const target = parsed.data.status;
       if (!transitions[order.status]?.includes(target)) return 'TRANSITION';
+      if (target === 'CONFIRMED' && (order.shippingStatus !== 'CONFIRMED' || order.shippingFeeVnd === null || !order.carrierCode)) return 'SHIPPING_UNCONFIRMED';
       if (target === 'CANCELLED') {
         const items = await client.query('SELECT variant_id,quantity FROM order_items WHERE order_id=$1 FOR UPDATE', [order.id]);
         for (const item of items.rows) await client.query('UPDATE product_variants SET stock_quantity=stock_quantity+$1,updated_at=now() WHERE id=$2', [item.quantity, item.variant_id]);
@@ -241,6 +289,7 @@ export async function registerCommerceRoutes(app: FastifyInstance): Promise<void
     });
     if (result === 'MISSING') return invalid(reply, 'NOT_FOUND', 'Order not found.', 404);
     if (result === 'TRANSITION') return invalid(reply, 'INVALID_TRANSITION', 'This order cannot move to that status.', 409);
+    if (result === 'SHIPPING_UNCONFIRMED') return invalid(reply, 'SHIPPING_NOT_CONFIRMED', 'Nhập đơn vị vận chuyển và phí ship chính thức trước khi xác nhận đơn.', 409);
     return reply.send({ data: { status: parsed.data.status } });
   });
   app.get('/api/v1/admin/products', async (request, reply) => {
@@ -266,19 +315,79 @@ export async function registerCommerceRoutes(app: FastifyInstance): Promise<void
   });
   app.get('/api/v1/admin/settings', async (request, reply) => {
     const actor = await requireAdmin(request, reply); if (!actor) return;
-    const found = await pool.query('SELECT contact_phone AS "contactPhone",messenger_url AS "messengerUrl",default_shipping_fee_vnd AS "defaultShippingFeeVnd" FROM store_settings WHERE provenance=$1', [provenance]);
+    const found = await pool.query('SELECT contact_phone AS "contactPhone",messenger_url AS "messengerUrl",order_notification_to AS "orderNotificationTo",order_notifications_enabled AS "orderNotificationsEnabled" FROM store_settings WHERE provenance=$1', [provenance]);
     return reply.send({ data: found.rows[0] });
   });
-  app.patch('/api/v1/admin/settings', { preHandler: enforceOrigin }, async (request, reply) => {
+  app.patch('/api/v1/admin/settings/logistics', { preHandler: enforceOrigin }, async (request, reply) => {
     const actor = await requireAdmin(request, reply); if (!actor) return;
-    const parsed = z.object({ contactPhone: phoneSchema, messengerUrl: z.string().url().max(300).refine((v) => /^https:\/\/(www\.)?facebook\.com\//.test(v)), defaultShippingFeeVnd: z.number().int().min(0).max(2000000).nullable() }).safeParse(request.body);
-    if (!parsed.success) return invalid(reply, 'INVALID_SETTINGS', 'Check the phone, Messenger link, and shipping fee.');
-    const old = await pool.query('SELECT contact_phone,messenger_url,default_shipping_fee_vnd FROM store_settings WHERE provenance=$1', [provenance]);
+    const parsed = z.object({ orderNotificationTo: z.string().email().max(254), orderNotificationsEnabled: z.boolean() }).safeParse(request.body);
+    if (!parsed.success) return invalid(reply, 'INVALID_LOGISTICS_SETTINGS', 'Kiểm tra email nhận thông báo đơn hàng.');
+    const before = await pool.query('SELECT order_notification_to,order_notifications_enabled FROM store_settings WHERE provenance=$1', [provenance]);
     const next = parsed.data;
     await transactional(async (client) => {
-      await client.query('UPDATE store_settings SET contact_phone=$1,messenger_url=$2,default_shipping_fee_vnd=$3,updated_at=now() WHERE provenance=$4', [next.contactPhone,next.messengerUrl,next.defaultShippingFeeVnd,provenance]);
+      await client.query('UPDATE store_settings SET order_notification_to=$1,order_notifications_enabled=$2,updated_at=now() WHERE provenance=$3', [next.orderNotificationTo,next.orderNotificationsEnabled,provenance]);
+      if (before.rows[0]?.order_notification_to !== next.orderNotificationTo) await audit(client, actor, 'ORDER_NOTIFICATION_RECIPIENT_CHANGED', 'SETTINGS', null, { changed: true });
+      if (before.rows[0]?.order_notifications_enabled !== next.orderNotificationsEnabled) await audit(client, actor, 'STORE_SETTINGS_CHANGED', 'SETTINGS', null, { orderNotificationsEnabled: next.orderNotificationsEnabled });
+    });
+    return reply.send({ data: next });
+  });
+  app.get('/api/v1/admin/shipping-estimates', async (request, reply) => {
+    const actor = await requireAdmin(request, reply); if (!actor) return;
+    const rows = await pool.query('SELECT id,province_code AS "provinceCode",display_name AS "displayName",estimate_min_vnd AS "estimateMinVnd",estimate_max_vnd AS "estimateMaxVnd",is_fallback AS "isFallback",is_active AS "isActive" FROM shipping_estimate_rules WHERE provenance=$1 ORDER BY is_fallback,display_name,id', [provenance]);
+    return reply.send({ data: rows.rows.map((row) => ({ ...row, estimateMinVnd: Number(row.estimateMinVnd), estimateMaxVnd: Number(row.estimateMaxVnd) })) });
+  });
+  app.post('/api/v1/admin/shipping-estimates', { preHandler: enforceOrigin }, async (request, reply) => {
+    const actor = await requireAdmin(request, reply); if (!actor) return;
+    const parsed = z.object({ provinceCode: z.string().length(2).nullable(), displayName: z.string().trim().min(1).max(120), estimateMinVnd: z.number().int().min(0).max(2000000000), estimateMaxVnd: z.number().int().min(0).max(2000000000), isFallback: z.boolean() }).refine((value) => value.estimateMinVnd <= value.estimateMaxVnd && (value.isFallback ? value.provinceCode === null : provinceLabel(value.provinceCode ?? '') !== null)).safeParse(request.body);
+    if (!parsed.success) return invalid(reply, 'INVALID_SHIPPING_ESTIMATE', 'Kiểm tra tỉnh/thành phố và khoảng phí vận chuyển.');
+    const result = await transactional(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('tcm-shipping-estimates'),hashtext($1))", [provenance]);
+      const duplicate = await client.query('SELECT id FROM shipping_estimate_rules WHERE provenance=$1 AND is_active AND is_fallback=$2 AND (($2 AND province_code IS NULL) OR (NOT $2 AND province_code=$3))', [provenance,parsed.data.isFallback,parsed.data.provinceCode]);
+      if (duplicate.rows.length) return null;
+      const created = await client.query('INSERT INTO shipping_estimate_rules(provenance,province_code,display_name,estimate_min_vnd,estimate_max_vnd,is_fallback) VALUES($1,$2,$3,$4,$5,$6) RETURNING id', [provenance,parsed.data.provinceCode,parsed.data.displayName,parsed.data.estimateMinVnd,parsed.data.estimateMaxVnd,parsed.data.isFallback]);
+      await audit(client, actor, 'SHIPPING_ESTIMATE_CREATED', 'SHIPPING_ESTIMATE', created.rows[0].id, { isFallback: parsed.data.isFallback });
+      return created.rows[0].id as string;
+    });
+    if (!result) return invalid(reply, 'SHIPPING_ESTIMATE_DUPLICATE', 'Đã có mức phí đang bật cho tỉnh/thành phố hoặc mức dự phòng này.', 409);
+    return reply.code(201).send({ data: { id: result, ...parsed.data, isActive: true } });
+  });
+  app.patch<{ Params: { ruleId: string } }>('/api/v1/admin/shipping-estimates/:ruleId', { preHandler: enforceOrigin }, async (request, reply) => {
+    const actor = await requireAdmin(request, reply);
+    if (!actor) return;
+    if (!uuid.safeParse(request.params.ruleId).success) return invalid(reply, 'NOT_FOUND', 'Shipping estimate not found.', 404);
+    const parsed = z.object({ displayName: z.string().trim().min(1).max(120).optional(), estimateMinVnd: z.number().int().min(0).max(2000000000).optional(), estimateMaxVnd: z.number().int().min(0).max(2000000000).optional(), isActive: z.boolean().optional() }).safeParse(request.body);
+    if (!parsed.success || !Object.keys(parsed.data).length) return invalid(reply, 'INVALID_SHIPPING_ESTIMATE', 'Kiểm tra khoảng phí vận chuyển.');
+    const result = await transactional(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('tcm-shipping-estimates'),hashtext($1))", [provenance]);
+      const found = await client.query('SELECT * FROM shipping_estimate_rules WHERE id=$1 AND provenance=$2 FOR UPDATE', [request.params.ruleId,provenance]);
+      if (!found.rows[0]) return 'MISSING';
+      const row = found.rows[0];
+      const min = parsed.data.estimateMinVnd ?? Number(row.estimate_min_vnd);
+      const max = parsed.data.estimateMaxVnd ?? Number(row.estimate_max_vnd);
+      if (min > max) return 'INVALID';
+      if (parsed.data.isActive === true && !row.is_active) {
+        const duplicate = await client.query('SELECT id FROM shipping_estimate_rules WHERE provenance=$1 AND is_active AND is_fallback=$2 AND (($2 AND province_code IS NULL) OR (NOT $2 AND province_code=$3)) AND id<>$4', [provenance,row.is_fallback,row.province_code,request.params.ruleId]);
+        if (duplicate.rows.length) return 'DUPLICATE';
+      }
+      const active = parsed.data.isActive ?? Boolean(row.is_active);
+      await client.query('UPDATE shipping_estimate_rules SET display_name=$1,estimate_min_vnd=$2,estimate_max_vnd=$3,is_active=$4,updated_at=now() WHERE id=$5', [parsed.data.displayName ?? row.display_name,min,max,active,request.params.ruleId]);
+      await audit(client, actor, active ? 'SHIPPING_ESTIMATE_UPDATED' : 'SHIPPING_ESTIMATE_DISABLED', 'SHIPPING_ESTIMATE', request.params.ruleId, { changedFields: Object.keys(parsed.data) });
+      return 'OK';
+    });
+    if (result === 'MISSING') return invalid(reply, 'NOT_FOUND', 'Shipping estimate not found.', 404);
+    if (result === 'INVALID') return invalid(reply, 'INVALID_SHIPPING_ESTIMATE', 'Mức thấp nhất không được lớn hơn mức cao nhất.');
+    if (result === 'DUPLICATE') return invalid(reply, 'SHIPPING_ESTIMATE_DUPLICATE', 'Đã có mức phí đang bật cho tỉnh/thành phố hoặc mức dự phòng này.', 409);
+    return reply.send({ data: { updated: true } });
+  });  app.patch('/api/v1/admin/settings', { preHandler: enforceOrigin }, async (request, reply) => {
+    const actor = await requireAdmin(request, reply); if (!actor) return;
+    const parsed = z.object({ contactPhone: phoneSchema, messengerUrl: z.string().url().max(300).refine((v) => /^https:\/\/(www\.)?facebook\.com\//.test(v)) }).safeParse(request.body);
+    if (!parsed.success) return invalid(reply, 'INVALID_SETTINGS', 'Check the phone and Messenger link.');
+    const old = await pool.query('SELECT contact_phone,messenger_url FROM store_settings WHERE provenance=$1', [provenance]);
+    const next = parsed.data;
+    await transactional(async (client) => {
+      await client.query('UPDATE store_settings SET contact_phone=$1,messenger_url=$2,updated_at=now() WHERE provenance=$3', [next.contactPhone,next.messengerUrl,provenance]);
       const before = old.rows[0];
-      if (before.contact_phone !== next.contactPhone || before.messenger_url !== next.messengerUrl || before.default_shipping_fee_vnd !== next.defaultShippingFeeVnd) await audit(client, actor, 'STORE_SETTINGS_CHANGED', 'SETTINGS', null, { phoneChanged: before.contact_phone !== next.contactPhone, messengerChanged: before.messenger_url !== next.messengerUrl, shippingChanged: before.default_shipping_fee_vnd !== next.defaultShippingFeeVnd });
+      if (before.contact_phone !== next.contactPhone || before.messenger_url !== next.messengerUrl) await audit(client, actor, 'STORE_SETTINGS_CHANGED', 'SETTINGS', null, { phoneChanged: before.contact_phone !== next.contactPhone, messengerChanged: before.messenger_url !== next.messengerUrl });
     });
     return reply.send({ data: { ...next } });
   });

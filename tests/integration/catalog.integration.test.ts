@@ -5,11 +5,19 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const testUrl = process.env.TEST_DATABASE_URL;
+if (!testUrl) throw new Error('TEST_DATABASE_URL is required; PostgreSQL integration tests must not be skipped.');
+const testDatabase = new URL(testUrl);
+if (!['localhost', '127.0.0.1', '[::1]', 'database'].includes(testDatabase.hostname) || !/(?:^|[_-])(?:test|stage|staging)(?:$|[_-])/i.test(testDatabase.pathname)) throw new Error('Refusing integration tests unless TEST_DATABASE_URL targets a local database explicitly named TEST/staging.');
 const baseUrl = process.env.TEST_API_URL ?? 'http://127.0.0.1:4004';
 const { Pool } = pg;
 const pool = testUrl ? new Pool({ connectionString: testUrl }) : null;
 let productionProcess: ChildProcess | undefined;
 let testProcess: ChildProcess | undefined;
+const startupDiagnostics: string[] = [];
+const captureStartupError = (chunk: Buffer) => {
+  const safe = chunk.toString('utf8').replace(/(postgres(?:ql)?:\/\/[^:/\s]+:)[^@\s]+@/gi, '$1[REDACTED]@');
+  startupDiagnostics.push(safe);
+};
 type ProductList = { data: Array<{ slug: string; name: string; categorySlug: string; priceVnd: number }>; pagination: { total: number; page: number; limit: number; pages: number } };
 type CategoryList = { data: Array<{ slug: string }> };
 type ProductDetail = { data: { variants: Array<{ size: string; priceVnd: number; availability: string }>; images: unknown[] } };
@@ -17,23 +25,25 @@ const fetchJson = async <T = unknown>(path: string, url = baseUrl) => {
   const response = await fetch(`${url}${path}`);
   return { status: response.status, body: await response.json() as T };
 };
-const skipOptions = testUrl ? undefined : { skip: 'Set TEST_DATABASE_URL to an isolated Tiệm Của Mây PostgreSQL test database.' };
+const skipOptions = undefined;
 
 before(async () => {
   if (!testUrl) return;
   testProcess = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
-    cwd: process.cwd(), stdio: 'ignore', env: { ...process.env, DATABASE_URL: testUrl, NODE_ENV: 'test', CATALOG_MODE: 'test', PORT: new URL(baseUrl).port },
+    cwd: process.cwd(), stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, DATABASE_URL: testUrl, NODE_ENV: 'test', CATALOG_MODE: 'test', PORT: new URL(baseUrl).port },
   });
+  testProcess.stderr?.on('data', captureStartupError);
   productionProcess = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
-    cwd: process.cwd(), stdio: 'ignore', env: { ...process.env, DATABASE_URL: testUrl, NODE_ENV: 'test', CATALOG_MODE: 'production', PORT: '4001' },
+    cwd: process.cwd(), stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, DATABASE_URL: testUrl, NODE_ENV: 'test', CATALOG_MODE: 'production', PORT: '4001' },
   });
+  productionProcess.stderr?.on('data', captureStartupError);
   for (const url of [baseUrl, 'http://127.0.0.1:4001']) {
     let ready = false;
-    for (let attempt = 0; attempt < 50; attempt++) {
+    for (let attempt = 0; attempt < 150; attempt++) {
       try { if ((await fetch(`${url}/ready`)).ok) { ready = true; break; } } catch { /* service is starting */ }
       await delay(100);
     }
-    if (!ready) throw new Error(`Catalog integration API did not start at ${url}`);
+    if (!ready) throw new Error(`Catalog integration API did not start at ${url}; test exit=${testProcess.exitCode ?? 'running'}; production exit=${productionProcess.exitCode ?? 'running'}; startup=${startupDiagnostics.join('').slice(-2000)}`);
   }
 });
 after(async () => { await pool?.end(); productionProcess?.kill(); testProcess?.kill(); });
@@ -101,7 +111,7 @@ test('O: production mode excludes TEST-only catalog data', skipOptions, async ()
   const cookie = cart.headers.get('set-cookie')?.split(';')[0] ?? '';
   const attempt = await fetch('http://127.0.0.1:4001/api/v1/public/cart/items', { method: 'POST', headers: { Origin: 'http://localhost:3000', 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ variantId: variant, quantity: 1 }) });
   assert.equal(attempt.status, 404);
-  const order = await fetch('http://127.0.0.1:4001/api/v1/public/orders', { method: 'POST', headers: { Origin: 'http://localhost:3000', 'Content-Type': 'application/json', Cookie: cookie, 'Idempotency-Key': '6b7ed87a-7ed2-408b-9662-ccbfdf39b163' }, body: JSON.stringify({ customerName: 'QA', customerPhone: '0901234567', deliveryAddress: 'Test Address 123' }) });
-  assert.equal(order.status, 409);
-  assert.equal(((await order.json()) as { error: { code: string } }).error.code, 'SHIPPING_NOT_CONFIGURED');
+  const order = await fetch('http://127.0.0.1:4001/api/v1/public/orders', { method: 'POST', headers: { Origin: 'http://localhost:3000', 'Content-Type': 'application/json', Cookie: cookie, 'Idempotency-Key': '6b7ed87a-7ed2-408b-9662-ccbfdf39b163' }, body: JSON.stringify({ customerName: 'QA', customerPhone: '0901234567', provinceCode: '79', provinceLabel: 'Thành phố Hồ Chí Minh', deliveryAddress: 'Test Address 123' }) });
+  assert.equal(order.status, 400);
+  assert.equal(((await order.json()) as { error: { code: string } }).error.code, 'CART_EMPTY');
 });

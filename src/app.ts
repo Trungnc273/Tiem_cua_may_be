@@ -40,7 +40,7 @@ export async function createApp() {
   });
   app.get('/health', async () => ({ status: 'ok' }));
   app.get('/ready', async (_request, reply) => {
-    try { await pool.query("SELECT 1 FROM schema_migrations WHERE name='0005_r2_product_media.sql'"); return { status: 'ready' }; }
+    try { await pool.query("SELECT 1 FROM schema_migrations WHERE name='0007_shipping_estimates.sql'"); return { status: 'ready' }; }
     catch { return reply.code(503).send({ status: 'unavailable' }); }
   });
   await registerCatalogRoutes(app);
