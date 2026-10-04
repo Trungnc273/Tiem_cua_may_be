@@ -58,7 +58,7 @@ test('B4 catalog journey: draft, images, variant stock, immutable order image sn
   const filtered = await api(`/api/v1/admin/catalog/products?q=${variant.sku}&categoryId=${categoryId}&status=DRAFT&page=1&limit=5`, { cookie }); assert.equal(filtered.status, 200); assert.equal(filtered.body.pagination.total, 1); assert.equal(filtered.body.data[0].totalStock, 2);
 
   const png = await readFile(join(process.cwd(), '..', 'TIEM_CUA_MAY_FE', 'public', 'demo', 'product-blouse-clean.png'));
-  const jpeg = await readFile(join(process.cwd(), '..', 'TIEM_CUA_MAY_FE', 'public', 'brand', 'logo.jpg'));
+  const jpeg = await readFile(join(process.cwd(), 'tests', 'fixtures', 'upload-test.jpg'));
   const makeImage = (bytes: Buffer, altText: string, variantId: string | null = null, isPrimary = false) => ({ dataBase64: bytes.toString('base64'), altText, variantId, isPrimary });
   const uploaded = await api(`/api/v1/admin/catalog/products/${product.id}/images`, { method: 'POST', cookie, body: makeImage(png, 'Ảnh PNG', null, true) });
   assert.equal(uploaded.status, 201); const image = uploaded.body.data;

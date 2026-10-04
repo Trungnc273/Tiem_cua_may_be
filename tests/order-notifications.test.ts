@@ -31,7 +31,7 @@ test('email sender falls back to the approved sender and never requires the API 
   });
   assert.deepEqual(result, { sent: true });
   assert.equal((requestHeaders as Record<string, string>)['api-key'], 'secret-test-key');
-  assert.deepEqual(requestBody?.sender, { email: 'midoradesign@gmail.com', name: 'Tiệm Của Mây' });
+  assert.deepEqual(requestBody?.sender, { email: 'midoradesign@gmail.com', name: 'Midora' });
   assert.equal(JSON.stringify(requestBody).includes('secret-test-key'), false);
 });
 
