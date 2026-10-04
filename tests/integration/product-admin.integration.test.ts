@@ -9,16 +9,20 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
+if (!databaseUrl) throw new Error('TEST_DATABASE_URL is required; PostgreSQL integration tests must not be skipped.');
+const testDatabase = new URL(databaseUrl);
+if (!['localhost', '127.0.0.1', '[::1]', 'database'].includes(testDatabase.hostname) || !/(?:^|[_-])(?:test|stage|staging)(?:$|[_-])/i.test(testDatabase.pathname)) throw new Error('Refusing integration tests unless TEST_DATABASE_URL targets a local database explicitly named TEST/staging.');
 const baseUrl = process.env.PRODUCT_ADMIN_TEST_API_URL ?? 'http://127.0.0.1:4003';
 const origin = process.env.PRODUCT_ADMIN_TEST_ORIGIN ?? 'http://127.0.0.1:3100';
 const { Pool } = pg;
 const pool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
 const email = `batch4-${randomBytes(5).toString('hex')}@example.invalid`;
 const password = randomBytes(24).toString('base64url');
-const skip = databaseUrl ? undefined : { skip: 'Set TEST_DATABASE_URL to the isolated Tiệm Của Mây PostgreSQL test database.' };
+const skip = undefined;
 let server: ChildProcess | undefined;
 let cookie = '';
 let uploadsDir = '';
+const startupDiagnostics: string[] = [];
 // API payload shape varies by route; individual assertions narrow the fields in each step.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Result = { status: number; body: any; cookie: string };
@@ -36,9 +40,9 @@ before(async () => {
   uploadsDir = await mkdtemp(join(tmpdir(), 'tcm-batch4-media-'));
   const salt = randomBytes(16).toString('hex'); const hash = scryptSync(password, salt, 64).toString('hex');
   await pool!.query("INSERT INTO admin_users(provenance,email,password_salt,password_hash) VALUES('TEST',$1,$2,$3)", [email, salt, hash]);
-  await pool!.query("UPDATE store_settings SET default_shipping_fee_vnd=25000 WHERE provenance='TEST'");
-  server = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { cwd: process.cwd(), stdio: 'ignore', env: { ...process.env, DATABASE_URL: databaseUrl, NODE_ENV: 'test', CATALOG_MODE: 'test', PORT: new URL(baseUrl).port, HOST: '127.0.0.1', CORS_ORIGINS: origin, PRODUCT_UPLOAD_DIR: uploadsDir } });
-  for (let i=0;i<70;i++) { try { if ((await fetch(`${baseUrl}/ready`)).ok) break; } catch { /* server starting */ } await delay(100); if (i===69) throw new Error('Product admin API did not become ready'); }
+  server = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { cwd: process.cwd(), stdio: ['ignore','ignore','pipe'], env: { ...process.env, DATABASE_URL: databaseUrl, NODE_ENV: 'test', CATALOG_MODE: 'test', PORT: new URL(baseUrl).port, HOST: '127.0.0.1', CORS_ORIGINS: origin, PRODUCT_UPLOAD_DIR: uploadsDir } });
+  server.stderr?.on('data',(chunk:Buffer)=>startupDiagnostics.push(chunk.toString('utf8').replace(/(postgres(?:ql)?:\/\/[^:/\s]+:)[^@\s]+@/gi,'$1[REDACTED]@')));
+  for (let i=0;i<150;i++) { try { if ((await fetch(`${baseUrl}/ready`)).ok) break; } catch { /* server starting */ } await delay(100); if (i===149) throw new Error(`Product admin API did not become ready; exit=${server.exitCode??'running'}; startup=${startupDiagnostics.join('').slice(-2000)}`); }
   const login = await api('/api/v1/admin/auth/login', { method: 'POST', body: { email, password } }); assert.equal(login.status, 200); cookie = login.cookie; assert.match(cookie, /^tcm_admin=/);
 });
 after(async () => { await pool?.end(); server?.kill(); });
@@ -54,7 +58,7 @@ test('B4 catalog journey: draft, images, variant stock, immutable order image sn
   const filtered = await api(`/api/v1/admin/catalog/products?q=${variant.sku}&categoryId=${categoryId}&status=DRAFT&page=1&limit=5`, { cookie }); assert.equal(filtered.status, 200); assert.equal(filtered.body.pagination.total, 1); assert.equal(filtered.body.data[0].totalStock, 2);
 
   const png = await readFile(join(process.cwd(), '..', 'TIEM_CUA_MAY_FE', 'public', 'demo', 'product-blouse-clean.png'));
-  const jpeg = await readFile(join(process.cwd(), '..', 'TIEM_CUA_MAY_FE', 'public', 'brand', 'logo.jpg'));
+  const jpeg = await readFile(join(process.cwd(), 'tests', 'fixtures', 'upload-test.jpg'));
   const makeImage = (bytes: Buffer, altText: string, variantId: string | null = null, isPrimary = false) => ({ dataBase64: bytes.toString('base64'), altText, variantId, isPrimary });
   const uploaded = await api(`/api/v1/admin/catalog/products/${product.id}/images`, { method: 'POST', cookie, body: makeImage(png, 'Ảnh PNG', null, true) });
   assert.equal(uploaded.status, 201); const image = uploaded.body.data;
@@ -76,8 +80,8 @@ test('B4 catalog journey: draft, images, variant stock, immutable order image sn
   const duplicateSku = await api(`/api/v1/admin/catalog/products/${product.id}/variants`, { method: 'POST', cookie, body: { sku: variant.sku, size: 'M', colorCode: 'RED', colorName: 'Đỏ', priceOverrideVnd: null, stockQuantity: 1 } }); assert.equal(duplicateSku.status, 409);
   const cart = await api('/api/v1/public/cart'); assert.equal(cart.status, 200); const cartCookie = cart.cookie;
   const added = await api('/api/v1/public/cart/items', { method: 'POST', cookie: cartCookie, body: { variantId: variant.id, quantity: 1 } }); assert.equal(added.status, 201);
-  const key = randomUUID(); const checkout = await fetch(`${baseUrl}/api/v1/public/orders`, { method: 'POST', headers: { Origin: origin, Cookie: cartCookie, 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ customerName: 'Khách QA', customerPhone: '0876146498', deliveryAddress: '12 Nguyễn Huệ, Quận 1, TP Hồ Chí Minh', note: '' }) });
-  assert.equal(checkout.status, 201); const orderBody = await checkout.json() as { data: { orderCode: string } }; const orderRow = await pool!.query('SELECT id FROM orders WHERE order_code=$1', [orderBody.data.orderCode]); const orderId = orderRow.rows[0].id as string;
+  const key = randomUUID(); const checkout = await fetch(`${baseUrl}/api/v1/public/orders`, { method: 'POST', headers: { Origin: origin, Cookie: cartCookie, 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ customerName: 'Khách QA', customerPhone: '0876146498', provinceCode: '79', provinceLabel: 'Thành phố Hồ Chí Minh', deliveryAddress: '12 Nguyễn Huệ, Quận 1, TP Hồ Chí Minh', note: '' }) });
+  assert.equal(checkout.status, 201, await checkout.clone().text()); const orderBody = await checkout.json() as { data: { orderCode: string } }; const orderRow = await pool!.query('SELECT id FROM orders WHERE order_code=$1', [orderBody.data.orderCode]); const orderId = orderRow.rows[0].id as string;
   const stockAfterOrder = await pool!.query('SELECT stock_quantity FROM product_variants WHERE id=$1', [variant.id]); assert.equal(Number(stockAfterOrder.rows[0].stock_quantity), 1);
   const orderSnapshot = await pool!.query('SELECT product_name,original_unit_price_vnd,discount_percent,sale_unit_price_vnd,image_url,image_storage_key FROM order_items WHERE order_id=$1', [orderId]); const snapshot = orderSnapshot.rows[0]; assert.equal(snapshot.image_url, ''); assert.equal(snapshot.image_storage_key, webpUpload.body.data.storageKey);
   const cancelled = await api(`/api/v1/admin/orders/${orderId}/status`, { method: 'PATCH', cookie, body: { status: 'CANCELLED' } }); assert.equal(cancelled.status, 200);
