@@ -132,7 +132,7 @@ test('S-V: admin auth, origin checks, settings, price changes, and protected PII
 
 test('Batch 6 A-M: provincial estimates, fallback, snapshots, manual carrier confirmation, and server total',async()=>{
   const relogin=await api('/api/v1/admin/auth/login',{method:'POST',body:{email:adminEmail,password:adminPassword}});assert.equal(relogin.status,200);adminCookie=relogin.cookie;
-  await pool!.query("UPDATE store_settings SET order_notifications_enabled=false,order_notification_to='ntvippro24@gmail.com' WHERE provenance='TEST'");
+  await pool!.query("UPDATE store_settings SET order_notifications_enabled=false,order_notification_to='midoradesign@gmail.com' WHERE provenance='TEST'");
   await pool!.query("UPDATE shipping_estimate_rules SET is_active=false,updated_at=now() WHERE provenance='TEST' AND is_active");
   const fallback=await api<{data:{id:string}}>('/api/v1/admin/shipping-estimates',{method:'POST',cookie:adminCookie,body:{provinceCode:null,displayName:'Tỉnh/thành khác',estimateMinVnd:25000,estimateMaxVnd:40000,isFallback:true}});assert.equal(fallback.status,201);
   const specific=await api<{data:{id:string}}>('/api/v1/admin/shipping-estimates',{method:'POST',cookie:adminCookie,body:{provinceCode:'79',displayName:'Thành phố Hồ Chí Minh',estimateMinVnd:30000,estimateMaxVnd:45000,isFallback:false}});assert.equal(specific.status,201);
@@ -170,7 +170,7 @@ test('Batch 6 A-M: provincial estimates, fallback, snapshots, manual carrier con
   await api(`/api/v1/admin/shipping-estimates/${specific.body.data.id}`,{method:'PATCH',cookie:adminCookie,body:{estimateMinVnd:50000,estimateMaxVnd:70000}});
   const historical=(await pool!.query('SELECT shipping_estimate_min_vnd,shipping_estimate_max_vnd,shipping_fee_vnd,total_vnd,carrier_code,tracking_number FROM orders WHERE id=$1',[order.id])).rows[0];
   assert.equal(Number(historical.shipping_estimate_min_vnd),30000);assert.equal(Number(historical.shipping_estimate_max_vnd),45000);assert.equal(Number(historical.shipping_fee_vnd),31750);assert.equal(Number(historical.total_vnd),Number(order.subtotal_vnd)+31750);assert.equal(historical.carrier_code,'J_AND_T');assert.equal(historical.tracking_number,'TCK-1');
-  const outbox=(await pool!.query('SELECT status,recipient FROM order_notifications WHERE order_id=$1',[order.id])).rows[0];assert.ok(outbox,'order commit creates a separate email outbox record');assert.equal(outbox.recipient,'ntvippro24@gmail.com');
+  const outbox=(await pool!.query('SELECT status,recipient FROM order_notifications WHERE order_id=$1',[order.id])).rows[0];assert.ok(outbox,'order commit creates a separate email outbox record');assert.equal(outbox.recipient,'midoradesign@gmail.com');
   assert.ok((await pool!.query('SELECT id FROM orders WHERE id=$1',[order.id])).rows[0],'Brevo configuration failure cannot roll back the committed order');
   assert.equal((await api(`/api/v1/admin/orders/${order.id}/status`,{method:'PATCH',cookie:adminCookie,body:{status:'CANCELLED'}})).status,200);
   await pool!.query("UPDATE store_settings SET order_notifications_enabled=false WHERE provenance='TEST'");

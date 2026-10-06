@@ -18,7 +18,7 @@ export const products = pgTable('products', {
 });
 export const productVariants = pgTable('product_variants', {
   id: uuid('id').defaultRandom().primaryKey(), productId: uuid('product_id').notNull(), sku: varchar('sku', { length: 80 }).notNull().unique(),
-  size: varchar('size', { length: 40 }).notNull(), colorCode: varchar('color_code', { length: 48 }).notNull(), colorName: varchar('color_name', { length: 80 }).notNull(),
+  size: varchar('size', { length: 40 }).notNull(), colorCode: varchar('color_code', { length: 48 }), colorName: varchar('color_name', { length: 80 }),
   displayColor: varchar('display_color', { length: 80 }), colorHex: varchar('color_hex', { length: 7 }), priceOverrideVnd: integer('price_override_vnd'),
   stockQuantity: integer('stock_quantity').notNull(), isActive: boolean('is_active').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),

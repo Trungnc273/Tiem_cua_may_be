@@ -53,8 +53,8 @@ test('B4 catalog journey: draft, images, variant stock, immutable order image sn
   assert.equal(category.status, 201); const categoryId = category.body.data.id as string;
   const created = await api('/api/v1/admin/catalog/products', { method: 'POST', cookie, body: { name: 'Áo thử quản trị Batch 4', categoryId, basePriceVnd: 100000, discountPercent: 0 } });
   assert.equal(created.status, 201); assert.equal(created.body.data.status, 'DRAFT'); const product = created.body.data;
-  const madeVariant = await api(`/api/v1/admin/catalog/products/${product.id}/variants`, { method: 'POST', cookie, body: { sku: `B4-${randomBytes(4).toString('hex')}`, size: 'XXL/Custom', colorCode: 'CLOUD_BLUE', colorName: 'Xanh mây', displayColor: 'Mây', colorHex: '#A9D6F5', priceOverrideVnd: null, stockQuantity: 2 } });
-  assert.equal(madeVariant.status, 201); const variant = madeVariant.body.data;
+  const madeVariant = await api(`/api/v1/admin/catalog/products/${product.id}/variants`, { method: 'POST', cookie, body: { size: 'XXL/Custom', priceOverrideVnd: null, stockQuantity: 2 } });
+  assert.equal(madeVariant.status, 201); const variant = madeVariant.body.data; assert.match(variant.sku, /^AO-THU-QUAN-TRI-BATCH-4-XXL-CUSTOM(?:-\d+)?$/); assert.equal(variant.colorCode, null); assert.equal(variant.colorName, null);
   const filtered = await api(`/api/v1/admin/catalog/products?q=${variant.sku}&categoryId=${categoryId}&status=DRAFT&page=1&limit=5`, { cookie }); assert.equal(filtered.status, 200); assert.equal(filtered.body.pagination.total, 1); assert.equal(filtered.body.data[0].totalStock, 2);
 
   const png = await readFile(join(process.cwd(), '..', 'TIEM_CUA_MAY_FE', 'public', 'demo', 'product-blouse-clean.png'));
@@ -77,7 +77,7 @@ test('B4 catalog journey: draft, images, variant stock, immutable order image sn
 
   const published = await api(`/api/v1/admin/catalog/products/${product.id}/status`, { method: 'PATCH', cookie, body: { status: 'ACTIVE', updatedAt: product.updatedAt } }); assert.equal(published.status, 200);
   const publicProduct = await api(`/api/v1/public/products/${product.slug}`); assert.equal(publicProduct.status, 200); assert.equal(publicProduct.body.data.variants[0].size, 'XXL/Custom'); assert.equal(publicProduct.body.data.images.length, 3); assert.equal(publicProduct.body.data.images[0].storageKey, undefined, 'public APIs expose URLs but not object keys');
-  const duplicateSku = await api(`/api/v1/admin/catalog/products/${product.id}/variants`, { method: 'POST', cookie, body: { sku: variant.sku, size: 'M', colorCode: 'RED', colorName: 'Đỏ', priceOverrideVnd: null, stockQuantity: 1 } }); assert.equal(duplicateSku.status, 409);
+  const duplicateSize = await api(`/api/v1/admin/catalog/products/${product.id}/variants`, { method: 'POST', cookie, body: { size: 'XXL/Custom', priceOverrideVnd: null, stockQuantity: 1 } }); assert.equal(duplicateSize.status, 409); assert.equal(duplicateSize.body.error.code, 'DUPLICATE_SIZE');
   const cart = await api('/api/v1/public/cart'); assert.equal(cart.status, 200); const cartCookie = cart.cookie;
   const added = await api('/api/v1/public/cart/items', { method: 'POST', cookie: cartCookie, body: { variantId: variant.id, quantity: 1 } }); assert.equal(added.status, 201);
   const key = randomUUID(); const checkout = await fetch(`${baseUrl}/api/v1/public/orders`, { method: 'POST', headers: { Origin: origin, Cookie: cartCookie, 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify({ customerName: 'Khách QA', customerPhone: '0876146498', provinceCode: '79', provinceLabel: 'Thành phố Hồ Chí Minh', deliveryAddress: '12 Nguyễn Huệ, Quận 1, TP Hồ Chí Minh', note: '' }) });

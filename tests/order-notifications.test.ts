@@ -24,7 +24,7 @@ test('HTML email escapes customer and product content while retaining a plain-te
 test('email sender falls back to the approved sender and never requires the API key in client data', async () => {
   let requestBody: Record<string, unknown> | undefined;
   let requestHeaders: HeadersInit | undefined;
-  const result = await sendOrderEmail('ntvippro24@gmail.com', renderOrderNotification(order), { BREVO_API_KEY: 'secret-test-key' }, async (_url, init) => {
+  const result = await sendOrderEmail('midoradesign@gmail.com', renderOrderNotification(order), { BREVO_API_KEY: 'secret-test-key' }, async (_url, init) => {
     requestHeaders = init?.headers;
     requestBody = JSON.parse(String(init?.body));
     return new Response(null, { status: 201 });
@@ -37,7 +37,7 @@ test('email sender falls back to the approved sender and never requires the API 
 
 test('missing Brevo API key leaves notification retryable without contacting Brevo', async () => {
   let called = false;
-  const result = await sendOrderEmail('ntvippro24@gmail.com', renderOrderNotification(order), {}, async () => { called = true; return new Response(null); });
+  const result = await sendOrderEmail('midoradesign@gmail.com', renderOrderNotification(order), {}, async () => { called = true; return new Response(null); });
   assert.deepEqual(result, { sent: false, errorCode: 'BREVO_NOT_CONFIGURED' });
   assert.equal(called, false);
 });

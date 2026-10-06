@@ -11,8 +11,8 @@ function fakeDatabase() {
   const client = {
     async query(sql: string) {
       if (sql.includes("SET status='FAILED'") && sql.includes('locked_until < now()')) return { rows: [] };
-      if (sql.includes('SELECT id,order_id,recipient,attempts FROM order_notifications')) return { rows: state.status === 'PENDING' ? [{ id: 'notice-1', order_id: 'order-1', recipient: 'ntvippro24@gmail.com', attempts: state.attempts }] : [] };
-      if (sql.includes("SET status='SENDING'")) { state.status = 'SENDING'; state.attempts += 1; return { rows: [{ id: 'notice-1', order_id: 'order-1', recipient: 'ntvippro24@gmail.com', attempts: state.attempts }] }; }
+      if (sql.includes('SELECT id,order_id,recipient,attempts FROM order_notifications')) return { rows: state.status === 'PENDING' ? [{ id: 'notice-1', order_id: 'order-1', recipient: 'midoradesign@gmail.com', attempts: state.attempts }] : [] };
+      if (sql.includes("SET status='SENDING'")) { state.status = 'SENDING'; state.attempts += 1; return { rows: [{ id: 'notice-1', order_id: 'order-1', recipient: 'midoradesign@gmail.com', attempts: state.attempts }] }; }
       return { rows: [] };
     },
     release() {},
